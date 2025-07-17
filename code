@@ -1,0 +1,82 @@
+import cv2
+import mediapipe as mp
+import numpy as np
+import serial
+import time
+
+# Initialize Arduino Serial Communication (update COM port if needed)
+arduino = serial.Serial('COM3', 9600)
+time.sleep(2)  # Wait for Arduino to reset
+
+# Setup MediaPipe Face Mesh
+mp_face_mesh = mp.solutions.face_mesh
+face_mesh = mp_face_mesh.FaceMesh(max_num_faces=1)
+
+LEFT_EYE_LANDMARKS = [33, 133, 160, 159, 158, 144, 153, 154, 155, 173]
+
+def get_eye_center(landmarks, image_shape, eye_indices):
+    h, w = image_shape
+    points = np.array([
+        [int(landmarks[pt].x * w), int(landmarks[pt].y * h)]
+        for pt in eye_indices
+    ])
+    if len(points) >= 5:
+        ellipse = cv2.fitEllipse(points)
+        center = (int(ellipse[0][0]), int(ellipse[0][1]))
+    else:
+        center = np.mean(points, axis=0).astype(int)
+        center = tuple(center)
+    return center
+
+cap = cv2.VideoCapture(0)
+
+frame_width = 640
+frame_height = 480
+tolerance = 40  # Pixel tolerance for centering
+cap.set(3, frame_width)
+cap.set(4, frame_height)
+
+while True:
+    ret, frame = cap.read()
+    if not ret:
+        break
+
+    rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+    results = face_mesh.process(rgb_frame)
+
+    command = 'N'  # Default to No Eye
+
+    if results.multi_face_landmarks:
+        landmarks = results.multi_face_landmarks[0].landmark
+        left_eye_center = get_eye_center(landmarks, (frame_height, frame_width), LEFT_EYE_LANDMARKS)
+
+        # Draw eye landmarks and center
+        for idx in LEFT_EYE_LANDMARKS:
+            x = int(landmarks[idx].x * frame_width)
+            y = int(landmarks[idx].y * frame_height)
+            cv2.circle(frame, (x, y), 2, (0, 255, 0), -1)
+        cv2.circle(frame, left_eye_center, 5, (0, 0, 255), -1)
+
+        x_center, y_center = left_eye_center
+        center_x, center_y = frame_width // 2, frame_height // 2
+
+        if abs(x_center - center_x) <= tolerance and abs(y_center - center_y) <= tolerance:
+            command = 'C'  # Center
+        elif x_center < center_x - tolerance:
+            command = 'L'  # Left
+        elif x_center > center_x + tolerance:
+            command = 'R'  # Right
+        elif y_center < center_y - tolerance:
+            command = 'U'  # Up
+        elif y_center > center_y + tolerance:
+            command = 'D'  # Down
+
+    arduino.write(command.encode())
+
+    cv2.imshow('Eye Tracker', frame)
+    if cv2.waitKey(1) & 0xFF == ord('q'):
+        break
+
+cap.release()
+cv2.destroyAllWindows()
+arduino.close()
