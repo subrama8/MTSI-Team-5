@@ -24,6 +24,8 @@ const uint8_t LED_LEFT   = 6;
 const uint8_t LED_BOTTOM = 5;
 const uint8_t LED_RIGHT  = 10;
 
+const uint8_t LED_CENTER = 2;
+
 void setup() {
   Serial.begin(9600);
 
@@ -31,11 +33,13 @@ void setup() {
   pinMode(LED_BOTTOM, OUTPUT);
   pinMode(LED_RIGHT,  OUTPUT);
   pinMode(LED_LEFT,   OUTPUT);
+  pinMode(LED_CENTER,   OUTPUT);
 
   analogWrite(LED_TOP,    0);
   analogWrite(LED_BOTTOM, 0);
   analogWrite(LED_RIGHT,  0);
   analogWrite(LED_LEFT,   0);
+  analogWrite(LED_CENTER,   0);
 }
 
 /* Convert three ASCII digits to 0‑255 */
@@ -69,6 +73,12 @@ void loop() {
       analogWrite(LED_RIGHT,  255);
       analogWrite(LED_LEFT,   255);
       return;                           // skip rest of processing
+    }
+
+    if (abs(valV)<=10 && abs(valH) <=10) {
+      digitalWrite(LED_CENTER, 1);
+    } else {
+      digitalWrite(LED_CENTER, 0);
     }
 
     /* -------- vertical axis ------------------------------------------- */
