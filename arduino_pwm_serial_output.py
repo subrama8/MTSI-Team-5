@@ -7,9 +7,9 @@
 #     UyyyLxxx, D050R000, …    (always exactly 8 chars)
 #
 #   dirV = 'U' or 'D'                    (up / down)
-#   yyy  = |dy| // 2, clamped 0‑255      (vertical  magnitude)
+#   yyy  = |dy|, as 3-digit number        (vertical  magnitude)
 #   dirH = 'R' or 'L'                    (right / left)
-#   xxx  = |dx| // 3, clamped 0‑255      (horizontal magnitude)
+#   xxx  = |dx|, as 3-digit number       (horizontal magnitude)
 #
 # If no face detected → "N000N000"
 
@@ -24,7 +24,7 @@ class ArduinoPWMSerialOutput:
     Sends directional LED control packets based on eye position.
     """
 
-    def __init__(self, serial_port, baud_rate=9600):
+    def __init__(self, serial_port, baud_rate=115200):
         """
         Initialize Arduino serial connection.
 
@@ -62,8 +62,8 @@ class ArduinoPWMSerialOutput:
         dir_v = "U" if dy <= 0 else "D"
         dir_h = "L" if dx <= 0 else "R"
 
-        dist_v = min(abs(dy) // 2, 255)  # divide Y by 2
-        dist_h = min(abs(dx) // 3, 255)  # divide X by 3
+        dist_v = abs(dy)  # vertical magnitude
+        dist_h = abs(dx)  # horizontal magnitude
 
         return f"{dir_v}{dist_v:03d}{dir_h}{dist_h:03d}"
 
@@ -87,7 +87,7 @@ class ArduinoPWMSerialOutput:
             while True:
                 # Get eye location from model
                 eye_x, eye_y = self.eye_model.get_eye_location(
-                    debug_display=debug_display
+                    debug_display=False
                 )
 
                 if eye_x is not None and eye_y is not None:
@@ -99,6 +99,10 @@ class ArduinoPWMSerialOutput:
 
                 # Send packet to Arduino
                 self.send_packet(packet)
+
+                # Display frame with packet info if debug is enabled
+                if debug_display:
+                    self.eye_model.display_frame_with_packet(packet, eye_x, eye_y)
 
                 # Check for quit command (only if debug display is enabled)
                 if debug_display:
@@ -131,4 +135,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
