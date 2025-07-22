@@ -11,7 +11,7 @@ const uint8_t IN2B = 7;
 class PID {
 public:
   PID(float kp, float ki, float kd, float upperLimit = 255)
-      : kp_(kp), ki_(ki), kd_(kd), upperLimit(upperLimit) { reset(); }
+      : kp_(kp), ki_(ki), kd_(kd), upperLimit_(upperLimit) { reset(); }
 
   void reset() {
     lastTime_  = millis();
@@ -25,12 +25,12 @@ public:
 
     float dErr  = (error - lastError_) / dt;
     integral_  += (error + lastError_) * 0.5f * dt;
-    integral_   = constrain(integral_, -upperLimit, upperLimit);
+    integral_   = constrain(integral_, -upperLimit_, upperLimit_);
 
     float out = kp_ * error + ki_ * integral_ + kd_ * dErr;
     lastError_ = error;
     lastTime_  = now;
-    return constrain(out, -upperLimit, upperLimit);
+    return constrain(out, -upperLimit_, upperLimit_);
   }
 
 private:
