@@ -39,8 +39,8 @@ private:
   float lastError_, integral_;
 };
 
-PID xPid(0.001, 0, 0.0001);
-PID yPid(0.001, 0, 0.0001);
+PID xPid(8, 0, 0.0001);
+PID yPid(8, 0, 0.0001);
 
 inline bool isValidDigit(char c) {
   return c >= '0' && c <= '9';
@@ -95,9 +95,9 @@ void loop() {
   int16_t dutyH = xPid.calculate(errH);
   int16_t dutyV = yPid.calculate(errV);
 
-  setPinDirs(dutyH >= 0, dutyH < 0,  IN1A, IN1B);
-  setPinDirs(dutyV >= 0, dutyV < 0,  IN2A, IN2B);
+  setPinDirs(-dutyV >= 0, -dutyV < 0,  IN1A, IN1B);
+  setPinDirs(dutyH >= 0, dutyH < 0,  IN2A, IN2B);
 
-  analogWrite(EN1, constrain(abs(dutyH), 0, 255));
-  analogWrite(EN2, constrain(abs(dutyV), 0, 255));
+  analogWrite(EN1, constrain(abs(-dutyV), 0, 255));
+  analogWrite(EN2, constrain(abs(dutyH), 0, 255));
 }

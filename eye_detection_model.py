@@ -14,7 +14,7 @@ class EyeDetectionModel:
     Provides eye center detection from camera frames.
     """
 
-    def __init__(self, frame_width=640, frame_height=480, camera_index=1):
+    def __init__(self, frame_width=640, frame_height=480, camera_index=1, deadzone_pixels=10):
         """
         Initialize the eye detection model.
 
@@ -22,9 +22,11 @@ class EyeDetectionModel:
             frame_width (int): Camera frame width
             frame_height (int): Camera frame height
             camera_index (int): Camera index for cv2.VideoCapture
+            deadzone_pixels (int): Deadzone radius in pixels around frame center
         """
         self.frame_w = frame_width
         self.frame_h = frame_height
+        self.deadzone_pixels = deadzone_pixels
 
         # MediaPipe face mesh initialization
         self.mp_face_mesh = mp.solutions.face_mesh
@@ -141,8 +143,8 @@ class EyeDetectionModel:
                 # Calculate distance from center
                 distance = ((eye_x - center_x) ** 2 + (eye_y - center_y) ** 2) ** 0.5
 
-                # If within 5 pixel deadzone, use green text
-                if distance <= 5:
+                # If within deadzone, use green text
+                if distance <= self.deadzone_pixels:
                     text_color = (0, 255, 0)  # Green
 
             # Add packet info text with appropriate color

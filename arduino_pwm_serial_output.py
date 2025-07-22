@@ -14,8 +14,36 @@
 # If no face detected → "N000N000"
 
 import serial
+import serial.tools.list_ports
 import time
 from eye_detection_model import EyeDetectionModel
+
+
+def find_arduino_port():
+    """
+    Automatically detect Arduino serial port.
+    
+    Returns:
+        str: Arduino port path, or None if not found
+    """
+    ports = serial.tools.list_ports.comports()
+    
+    # Look for common Arduino identifiers
+    for port in ports:
+        port_name = port.device.lower()
+        description = (port.description or "").lower()
+        
+        # Check for Arduino-like ports
+        if ('usbmodem' in port_name or 
+            'arduino' in description or 
+            'ch340' in description or 
+            'ch341' in description or
+            'ftdi' in description):
+            print(f"🔍 Found potential Arduino port: {port.device} ({port.description})")
+            return port.device
+    
+    print("⚠️ No Arduino port detected automatically")
+    return None
 
 
 class ArduinoPWMSerialOutput:
@@ -24,18 +52,20 @@ class ArduinoPWMSerialOutput:
     Sends directional LED control packets based on eye position.
     """
 
-    def __init__(self, serial_port, baud_rate=115200):
+    def __init__(self, serial_port, baud_rate=115200, deadzone_pixels=10):
         """
         Initialize Arduino serial connection.
 
         Args:
             serial_port (str): Arduino serial port path
             baud_rate (int): Serial communication baud rate
+            deadzone_pixels (int): Deadzone radius in pixels around frame center
         """
         print(f"Initializing eye tracking system...")
         print(f"Serial port: {serial_port}, baud rate: {baud_rate}")
         self.serial_port = serial_port
         self.baud_rate = baud_rate
+        self.deadzone_pixels = deadzone_pixels
         
         try:
             self.arduino = serial.Serial(serial_port, baud_rate, timeout=1)
@@ -48,7 +78,7 @@ class ArduinoPWMSerialOutput:
 
         # Initialize eye detection model
         try:
-            self.eye_model = EyeDetectionModel()
+            self.eye_model = EyeDetectionModel(deadzone_pixels=self.deadzone_pixels)
             print("✓ Eye detection model initialized")
         except Exception as e:
             print(f"✗ Failed to initialize eye detection model: {e}")
@@ -74,6 +104,11 @@ class ArduinoPWMSerialOutput:
         # Compute deltas with scaling
         dx = eye_x - self.frame_w // 2  # + = right,  - = left
         dy = eye_y - self.frame_h // 2  # + = down,   - = up
+
+        # Check if within deadzone
+        distance = (dx ** 2 + dy ** 2) ** 0.5
+        if distance <= self.deadzone_pixels:
+            return "N000N000"  # No movement within deadzone
 
         dir_v = "U" if dy <= 0 else "D"
         dir_h = "L" if dx <= 0 else "R"
@@ -196,8 +231,17 @@ def main():
     print("=" * 40)
     
     try:
+        # Automatically detect Arduino port
+        arduino_port = find_arduino_port()
+        if not arduino_port:
+            # Fallback to known ports if auto-detection fails
+            fallback_ports = ["/dev/cu.usbmodemF412FA6399F42", "/dev/cu.usbmodem*", "COM3", "COM4", "COM5"]
+            print(f"💡 Available ports: {[port.device for port in serial.tools.list_ports.comports()]}")
+            print("❌ Please connect Arduino or check the port manually")
+            sys.exit(1)
+        
         # Create and run the Arduino PWM serial output controller
-        controller = ArduinoPWMSerialOutput("/dev/cu.usbmodemF412FA6399F42")
+        controller = ArduinoPWMSerialOutput(arduino_port)
         controller.run(debug_display=True)
     except KeyboardInterrupt:
         print("\n🛑 Program stopped by user")
