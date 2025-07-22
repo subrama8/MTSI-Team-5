@@ -8,54 +8,30 @@ struct ScheduleView: View {
     var body: some View {
         List {
             ForEach(schedule.meds) { med in
-                MedicationRow(med: med)
-                    .swipeActions {
-                        Button("Edit") { editMed = med }
-                            .tint(.blue)
-
-                        Button(role: .destructive) {
-                            schedule.meds.removeAll { $0.id == med.id }
-                        } label: {
-                            Label("Delete", systemImage: "trash")
-                        }
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack {
+                        Circle().fill(med.color).frame(width: 14)
+                        Text(med.name).font(.title3.bold())
+                        Spacer()
+                        Text("\(med.times.count)×/day").foregroundStyle(.secondary)
                     }
+                    Text(med.frequency.description).foregroundStyle(.secondary)
+                }
+                .padding(.vertical, 4)
+                .swipeActions {
+                    Button("Edit") { editMed = med }.tint(.blue)
+                    Button(role: .destructive) {
+                        schedule.meds.removeAll { $0.id == med.id }
+                    } label: { Label("Delete", systemImage: "trash") }
+                }
             }
         }
         .listStyle(.insetGrouped)
-        .navigationTitle("Medications")
+        .navigationTitle("Schedule")
         .toolbar {
-            Button {
-                showAdd = true
-            } label: {
-                Image(systemName: "plus")
-            }
+            Button { showAdd = true } label: { Image(systemName: "plus") }
         }
         .sheet(isPresented: $showAdd) { AddMedicationView() }
         .sheet(item: $editMed)       { AddMedicationView(existing: $0) }
-    }
-
-    // MARK: Row ---------------------------------------------------------------
-    private struct MedicationRow: View {
-        @ObservedObject var med: Medication
-        private let df: DateFormatter = {
-            let f = DateFormatter(); f.timeStyle = .short; return f
-        }()
-
-        var body: some View {
-            VStack(alignment: .leading, spacing: 4) {
-                HStack {
-                    Circle().fill(med.color).frame(width: 10)
-                    Text(med.name).font(.headline)
-                }
-                Text(
-                    med.times
-                        .compactMap { Calendar.current.date(from: $0) }
-                        .map(df.string(from:))
-                        .joined(separator: ", ")
-                )
-                .font(.caption)
-                .foregroundColor(.secondary)
-            }
-        }
     }
 }

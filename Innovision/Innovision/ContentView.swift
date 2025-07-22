@@ -10,7 +10,8 @@ struct ContentView: View {
                 .tabItem { Label("Schedule", systemImage: "calendar") }
 
             NavigationStack { HistoryView() }
-                .tabItem { Label("History", systemImage: "checkmark.seal.fill") }
+                .tabItem { Label("History", systemImage: "clock") }
         }
+        .background(Color.back)
     }
 }

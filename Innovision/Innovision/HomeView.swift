@@ -4,91 +4,79 @@ struct HomeView: View {
     @EnvironmentObject private var schedule: MedicationSchedule
     @EnvironmentObject private var log: DropLog
     @EnvironmentObject private var device: DeviceService
-    
     @State private var showLogSheet = false
-    
-    // Find the soonest upcoming dose
-    private var nextDose: (med: Medication, date: Date)? {
-        schedule.meds
-            .compactMap { med in
-                med.nextDose().map { (med, $0) }
-            }
-            .min { $0.date < $1.date }
-    }
-    
+
     var body: some View {
-        VStack(spacing: 32) {
-            
-            // ---- Streak ring ----
-            Gauge(value: Double(log.streak), in: 0...30) {
-                Text("Streak")
-            } currentValueLabel: {
-                Text("\(log.streak)d")
-            }
-            .gaugeStyle(.accessoryCircular)
-            .frame(width: 120, height: 120)
-            
-            // ---- Next dose countdown ----
-            if let upcoming = nextDose {
-                VStack(spacing: 4) {
-                    Text("Next dose in")
-                        .font(.subheadline).foregroundColor(.secondary)
-                    Text(upcoming.date, style: .relative)
-                        .font(.title3).bold()
-                    Text(upcoming.med.name)
-                        .padding(6)
-                        .background(upcoming.med.color.opacity(0.2))
-                        .cornerRadius(6)
+        ScrollView {
+            VStack(spacing: 32) {
+
+                // ——— Rings ———
+                if schedule.meds.isEmpty {
+                    Text("Add a medication to get started!")
+                        .foregroundStyle(.secondary)
                 }
-            } else {
-                Text("No doses scheduled").foregroundColor(.secondary)
-            }
-            
-            // ---- Start / Stop device ----
-            Button {
-                if device.isRunning {
-                    device.stopDropper()
-                } else {
-                    if !device.isConnected { device.connect() }
-                    device.startDropper()
+
+                ForEach(schedule.meds) { med in
+                    let expected = schedule.expectedDoses(for: med)
+                    let taken    = log.takenToday(for: med)
+                    let progress = expected == 0 ? 0 : Double(taken) / Double(expected)
+                    let filled   = expected > 0 && taken >= expected
+
+                    VStack(spacing: 4) {
+                        Text(med.name).font(.headline)
+                        ProgressRing(progress: progress,
+                                     baseColor: med.color,
+                                     allDone: filled)
+                        Text("\(taken)/\(expected) logged today")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                    .padding(.vertical)
                 }
-            } label: {
-                Label(device.isRunning ? "Stop" : "Start",
-                      systemImage: device.isRunning ? "pause.circle"
-                                                    : "play.circle")
-                    .frame(maxWidth: .infinity)
+
+                // ——— Device toggle ———
+                Toggle(isOn: $device.isRunning) {
+                    Label(device.isRunning ? "Running" : "Off",
+                          systemImage: device.isRunning ? "drop.fill"
+                                                        : "pause.circle")
+                }
+                .toggleStyle(.button)
+                .tint(.skyBlue)
+                .onChange(of: device.isRunning) { _, newVal in   // iOS 17 syntax
+                    if newVal {
+                        if !device.isConnected { device.connect() }
+                        device.startDropper()
+                    } else {
+                        device.stopDropper()
+                    }
+                }
+
+                // ——— Manual log button ———
+                Button {
+                    showLogSheet = true
+                } label: {
+                    Label("Log a Drop", systemImage: "plus")
+                }
+                .buttonStyle(BigButton())
             }
-            .buttonStyle(.borderedProminent)
-            
-            // ---- Manual log button ----
-            Button {
-                showLogSheet = true
-            } label: {
-                Label("Log a Drop", systemImage: "drop.fill")
-                    .frame(maxWidth: .infinity)
-            }
-            .buttonStyle(.bordered)
-            .sheet(isPresented: $showLogSheet) {
-                ManualLogSheet()
-            }
+            .padding()
         }
-        .padding()
         .navigationTitle("Home")
+        .sheet(isPresented: $showLogSheet) { ManualLogSheet() }
     }
 }
 
-// MARK: Manual log picker sheet ---------------------------------------------
+// MARK: – Manual drop logger (kept in same file so it's always in scope)
 private struct ManualLogSheet: View {
-    @Environment(\.dismiss) private var dismiss
+    @Environment(\.dismiss)          private var dismiss
     @EnvironmentObject private var schedule: MedicationSchedule
     @EnvironmentObject private var log: DropLog
     @State private var selected: Medication?
-    
+
     var body: some View {
         NavigationStack {
             List(schedule.meds) { med in
                 HStack {
-                    Circle().fill(med.color).frame(width: 12)
+                    Circle().fill(med.color).frame(width: 16)
                     Text(med.name)
                     Spacer()
                     if selected?.id == med.id { Image(systemName: "checkmark") }
@@ -96,11 +84,11 @@ private struct ManualLogSheet: View {
                 .contentShape(Rectangle())
                 .onTapGesture { selected = med }
             }
-            .navigationTitle("Which med?")
+            .navigationTitle("Select Medication")
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Log") {
-                        if let med = selected { log.record(med, auto: false) }
+                        if let m = selected { log.record(m, auto: false) }
                         dismiss()
                     }
                     .disabled(selected == nil)

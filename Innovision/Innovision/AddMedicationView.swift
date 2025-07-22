@@ -3,17 +3,17 @@ import SwiftUI
 struct AddMedicationView: View {
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var schedule: MedicationSchedule
-    
-    @ObservedObject var med: Medication
+
+    @ObservedObject private var med: Medication
     @State private var newTime   = Date()
     @State private var freqStyle: Frequency
     private let isNew: Bool
-    
+
     // MARK: init --------------------------------------------------------------
     init(existing: Medication? = nil) {
-        if let existing {
-            _med       = ObservedObject(wrappedValue: existing)
-            _freqStyle = State(initialValue: existing.frequency)
+        if let m = existing {
+            _med       = ObservedObject(wrappedValue: m)
+            _freqStyle = State(initialValue: m.frequency)
             isNew      = false
         } else {
             let blank  = Medication(name: "", color: .blue)
@@ -22,21 +22,21 @@ struct AddMedicationView: View {
             isNew      = true
         }
     }
-    
+
     // MARK: body --------------------------------------------------------------
     var body: some View {
         NavigationStack {
             Form {
-                basicsSection
+                basicSection
+                timesSection
                 frequencySection
-                timeSection
             }
             .navigationTitle(isNew ? "Add Medication" : "Edit Medication")
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Save") {
                         med.frequency = freqStyle
-                        Task { await schedule.add(med) }
+                        if isNew { Task { await schedule.add(med) } }
                         dismiss()
                     }
                     .disabled(med.name.trimmingCharacters(in: .whitespaces).isEmpty
@@ -48,83 +48,82 @@ struct AddMedicationView: View {
             }
         }
     }
-    
+
     // MARK: sections ----------------------------------------------------------
-    private var basicsSection: some View {
-        Section("Basics") {
-            TextField("Name", text: $med.name)
-            ColorPicker("Color", selection: $med.color, supportsOpacity: false)
+    private var basicSection: some View {
+        Section("Name & Color") {
+            TextField("Medication name", text: $med.name)
+            ColorPicker("Label color", selection: $med.color, supportsOpacity: false)
         }
     }
-    
+
+    private var timesSection: some View {
+        Section("Dose Times  (\(med.times.count)/day)") {
+            ForEach(med.times.indices, id: \.self) { i in
+                DatePicker("",
+                           selection: Binding(
+                               get: { Self.date(from: med.times[i]) },
+                               set: { med.times[i] = Self.comps(from: $0) }),
+                           displayedComponents: .hourAndMinute)
+                .labelsHidden()
+            }
+
+            DatePicker("Select time", selection: $newTime,
+                       displayedComponents: .hourAndMinute)
+            Button("➕ Add time") { med.times.append(Self.comps(from: newTime)) }
+        }
+    }
+
     private var frequencySection: some View {
-        Section("Frequency") {
-            Picker("Remind", selection: $freqStyle) {
+        Section("Reminder pattern") {
+            Picker("How often?", selection: $freqStyle) {
                 Text("Daily").tag(Frequency.daily)
                 Text("Weekly").tag(Frequency.weekly([]))
             }
             .pickerStyle(.segmented)
-            
+
             if case .weekly(let set) = freqStyle {
-                WeekdayPicker(selection: set) { freqStyle = .weekly($0) }
+                WeekdayPicker(initial: set) { freqStyle = .weekly($0) }
+                    .padding(.vertical, 6)
             }
         }
     }
-    
-    private var timeSection: some View {
-        Section("Dose Times") {
-            ForEach(med.times.indices, id: \.self) { idx in
-                HStack {
-                    DatePicker("",
-                               selection: Binding(
-                                get: { Self.date(from: med.times[idx]) },
-                                set: { med.times[idx] = Self.comps(from: $0) }),
-                               displayedComponents: .hourAndMinute)
-                    .labelsHidden()
-                    
-                    Spacer()
-                    Button(role: .destructive) {
-                        med.times.remove(at: idx)
-                    } label: { Image(systemName: "minus.circle") }
-                }
-            }
-            
-            DatePicker("New time", selection: $newTime,
-                       displayedComponents: .hourAndMinute)
-            Button("➕ Add") {
-                med.times.append(Self.comps(from: newTime))
-            }
-        }
-    }
-    
-    // MARK: helpers -----------------------------------------------------------
+
+    // MARK: – Weekday picker (owns its own State) -----------------------------
     private struct WeekdayPicker: View {
-        let selection: Set<Int>
-        let onToggle : (Set<Int>) -> Void
-        
-        private let symbols: [String] = DateFormatter().veryShortWeekdaySymbols ??
-                                        ["S","M","T","W","T","F","S"]
-        
+        @State private var selection: Set<Int>
+        let onChange: (Set<Int>) -> Void
+
+        private let syms = DateFormatter().veryShortWeekdaySymbols ??
+                           ["S","M","T","W","T","F","S"]
+        private let days = [1,2,3,4,5,6,7]
+
+        init(initial: Set<Int>, onChange: @escaping (Set<Int>) -> Void) {
+            _selection = State(initialValue: initial)
+            self.onChange = onChange
+        }
+
         var body: some View {
             HStack {
-                ForEach(1...7, id: \.self) { day in
-                    let sel = selection.contains(day)
-                    Text(symbols[day - 1])
+                ForEach(days, id: \.self) { day in
+                    let isSel = selection.contains(day)
+                    Text(syms[day - 1])
                         .frame(maxWidth: .infinity)
                         .padding(8)
-                        .background(sel ? Color.blue.opacity(0.2)
-                                         : Color(.systemGray5))
-                        .cornerRadius(6)
+                        .background(isSel ? Color.blue.opacity(0.25)
+                                          : Color(.systemGray5))
+                        .cornerRadius(8)
                         .onTapGesture {
-                            var set = selection
-                            if sel { set.remove(day) } else { set.insert(day) }
-                            onToggle(set)
+                            if isSel { selection.remove(day) }
+                            else     { selection.insert(day) }
+                            onChange(selection)
                         }
                 }
             }
         }
     }
-    
+
+    // MARK: helpers -----------------------------------------------------------
     private static func comps(from date: Date) -> DateComponents {
         Calendar.current.dateComponents([.hour, .minute], from: date)
     }
