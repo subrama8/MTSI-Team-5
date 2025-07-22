@@ -16,6 +16,7 @@
 import serial
 import serial.tools.list_ports
 import time
+import sys
 from eye_detection_model import EyeDetectionModel
 
 
@@ -210,19 +211,35 @@ class ArduinoPWMSerialOutput:
 
     def cleanup(self):
         """Clean up resources."""
+        print("\n🧹 Starting cleanup...")
+        
+        # Clean up eye model first (includes camera and OpenCV windows)
         try:
             if hasattr(self, 'eye_model'):
                 self.eye_model.cleanup()
+                print("✓ Camera and OpenCV windows cleaned up")
         except Exception as e:
-            print(f"Error cleaning up camera: {e}")
+            print(f"⚠️  Error cleaning up camera: {e}")
         
+        # Clean up Arduino connection
         try:
             if hasattr(self, 'arduino') and self.arduino:
-                self.arduino.close()
+                if self.arduino.is_open:
+                    self.arduino.close()
+                print("✓ Arduino connection closed")
         except Exception as e:
-            print(f"Error closing Arduino connection: {e}")
+            print(f"⚠️  Error closing Arduino connection: {e}")
         
-        print("✓ Cleanup complete")
+        # Force cleanup of any remaining OpenCV resources
+        try:
+            import cv2
+            cv2.destroyAllWindows()
+            # Give OpenCV time to properly close windows
+            cv2.waitKey(1)
+        except Exception as e:
+            print(f"⚠️  Error in final OpenCV cleanup: {e}")
+        
+        print("✅ Cleanup complete")
 
 
 def main():

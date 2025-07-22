@@ -163,5 +163,16 @@ class EyeDetectionModel:
 
     def cleanup(self):
         """Release camera and close windows."""
-        self.cap.release()
-        cv2.destroyAllWindows()
+        try:
+            if hasattr(self, 'cap') and self.cap is not None:
+                if self.cap.isOpened():
+                    self.cap.release()
+        except Exception as e:
+            print(f"Error releasing camera: {e}")
+        
+        try:
+            cv2.destroyAllWindows()
+            # Give OpenCV time to properly destroy windows
+            cv2.waitKey(1)
+        except Exception as e:
+            print(f"Error destroying OpenCV windows: {e}")
