@@ -95,7 +95,7 @@ python3 plotter_movement.py        # PID controller utilities
 - Handle initialization timeouts and errors gracefully
 
 ### Hardware Configuration
-- Arduino serial port: `/dev/cu.usbmodemF412FA6399F42` (update as needed)
+- Arduino serial port: Automatically detected (supports any connected Arduino)
 - Serial baud rate: 115200 (consistent across all Arduino components)
 - Camera index: 1 (external camera, adjust if needed)
 - Frame size: 640x480 for optimal performance
