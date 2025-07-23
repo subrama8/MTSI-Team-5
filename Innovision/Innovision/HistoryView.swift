@@ -4,28 +4,18 @@ struct HistoryView: View {
     @EnvironmentObject private var log: DropLog
     private let cal = Calendar.current
 
-<<<<<<< HEAD
     private var sections: [(title: String, events: [DropEvent])] {
-=======
-    /// Pre‑group and sort so the body stays lightweight
-    private var dailySections: [(title: String, events: [DropEvent])] {
-        guard !log.events.isEmpty else { return [] }
-        
->>>>>>> main
         let grouped = Dictionary(grouping: log.events) { cal.startOfDay(for: $0.date) }
-        return grouped.map { day, evts in
+        return grouped.map { day, events in
             let title = cal.isDateInToday(day)
                        ? "Today"
-                       : DateFormatter.localizedString(from: day,
-                                                       dateStyle: .medium,
-                                                       timeStyle: .none)
-            return (title, evts.sorted { $0.date > $1.date })
+                       : DateFormatter.localizedString(from: day, dateStyle: .medium, timeStyle: .none)
+            return (title, events.sorted { $0.date > $1.date })
         }
-        .sorted { $0.events.first?.date ?? Date.distantPast > $1.events.first?.date ?? Date.distantPast }
+        .sorted { $0.events.first!.date > $1.events.first!.date }
     }
 
     var body: some View {
-<<<<<<< HEAD
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 32) {
                 if sections.isEmpty {
@@ -41,23 +31,7 @@ struct HistoryView: View {
                             .font(.title3.bold())
                             .padding(.horizontal)
 
-                        ForEach(section.events) { event in
-                            HistoryCard(event: event)
-=======
-        List {
-            if dailySections.isEmpty {
-                Section {
-                    Text("No medication history yet")
-                        .foregroundStyle(.secondary)
-                        .frame(maxWidth: .infinity, alignment: .center)
-                }
-            } else {
-                ForEach(dailySections, id: \.title) { section in
-                    Section(section.title) {
-                        ForEach(section.events) { event in
-                            HistoryRow(event: event)
->>>>>>> main
-                        }
+                        ForEach(section.events) { HistoryCard(event: $0) }
                     }
                 }
             }
@@ -67,7 +41,6 @@ struct HistoryView: View {
     }
 }
 
-// Card‑style row
 private struct HistoryCard: View {
     let event: DropEvent
     private let df: DateFormatter = {

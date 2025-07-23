@@ -11,18 +11,12 @@ struct ContentView: View {
 
             NavigationView { HistoryView() }
                 .tabItem { Label("History", systemImage: "clock") }
-<<<<<<< HEAD
 
-            NavigationView { CameraView() }                 // NEW
+            NavigationView { CameraView() }               // live webcam tab
                 .tabItem { Label("Camera", systemImage: "video") }
 
             NavigationView { NotificationSettingsView() }
                 .tabItem { Label("Settings", systemImage: "gearshape") }
-=======
-                
-            NavigationView { NotificationSettingsView() }
-                .tabItem { Label("Settings", systemImage: "gear") }
->>>>>>> main
         }
         .background(Color.back)
     }
