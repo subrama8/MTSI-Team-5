@@ -4,11 +4,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-This is an eye-tracking system project with four main components:
+This is an eye-tracking system project with five main components:
 1. **Web-based Face Detection UI** - React/TypeScript application for eye center detection using MediaPipe
 2. **Python Eye Tracker** - Real-time eye tracking with computer vision
 3. **Arduino LED Controller** - Hardware feedback system using PWM for directional LED indicators
 4. **Arduino Plotter Controller** - PID-controlled motor system for precise eye-tracking movement
+5. **iOS Medication Tracker (Innovision)** - SwiftUI app for eye medication scheduling and tracking
 
 ## Development Commands
 
@@ -32,6 +33,16 @@ python3 plotter_movement.py        # PID controller utilities
 ### Arduino
 - **LED Feedback**: Upload `arduino_pwm_directional_feedback.ino` for LED indicators
 - **Plotter Control**: Upload `PlotterMovementPID/PlotterMovementPID.ino` for motor control
+
+### iOS Application (Innovision)
+```bash
+# Open in Xcode
+open Innovision/Innovision.xcodeproj
+
+# Build and run
+# Use Xcode's build (⌘+B) and run (⌘+R) commands
+# Supports iOS simulator and physical devices
+```
 
 ## Architecture
 
@@ -67,6 +78,23 @@ python3 plotter_movement.py        # PID controller utilities
   - Automatic PID reset prevents integral windup
 - **Pin Map**: Motor1(EN1=9, IN1A=12, IN1B=13), Motor2(EN2=3, IN2A=5, IN2B=7)
 
+### iOS Medication Tracker (Innovision)
+- **Platform**: iOS 15+ using SwiftUI and Combine
+- **Architecture**: MVVM pattern with ObservableObject classes
+- **Key Features**:
+  - Medication scheduling with daily/weekly frequency options
+  - Local notifications for dose reminders (10 minutes early)
+  - Drop logging and adherence tracking
+  - Streak tracking for medication compliance
+  - BLE integration for hardware connectivity
+  - PDF export functionality for medical records
+- **Core Components**:
+  - `MedicationSchedule`: Manages medication list and scheduling
+  - `DropLog`: Tracks medication administration events
+  - `DeviceService`: Handles BLE connectivity
+  - `LocalNotificationManager`: Manages notification scheduling
+  - `ConflictDetector`: Identifies medication interaction conflicts
+
 ## Key Integration Points
 
 ### Data Flow
@@ -74,11 +102,14 @@ python3 plotter_movement.py        # PID controller utilities
 2. Eye center coordinates calculated → Scaled directional values
 3. Serial packet sent to Arduino → LED intensity control OR motor positioning
 4. Web app provides standalone image analysis interface
+5. iOS app schedules medication reminders → BLE communication with hardware → Drop logging
 
 ### Integration Options
 - **LED Feedback**: Use `arduino_pwm_serial_output.py` with LED controller Arduino
 - **Plotter Control**: Use `arduino_pwm_serial_output.py` with PlotterMovementPID Arduino
-- Both systems use identical 8-byte packet protocol for seamless switching
+- **iOS Integration**: Medication tracking app connects via BLE to hardware components
+- Both Arduino systems use identical 8-byte packet protocol for seamless switching
+- iOS app can trigger hardware feedback through BLE when medication times occur
 
 ### Serial Protocol
 - Format: `[dirV][valV][dirH][valH]` (8 ASCII chars)
@@ -99,12 +130,15 @@ python3 plotter_movement.py        # PID controller utilities
 - Serial baud rate: 115200 (consistent across all Arduino components)
 - Camera index: 1 (external camera, adjust if needed)
 - Frame size: 640x480 for optimal performance
+- iOS device: iPhone/iPad with iOS 15+ and BLE 4.0+ support
+- Xcode version: 14+ required for development
 
 ### Error Handling
 - Web app includes retry mechanisms for MediaPipe failures
 - Python script includes proper camera and serial cleanup
 - Arduino handles malformed packets gracefully with validation and buffer clearing
 - PlotterMovementPID includes packet validation and automatic error recovery
+- iOS app includes proper error handling for BLE connection failures and notification permission requests
 
 ### PlotterMovementPID Features
 - **Packet Validation**: Validates direction characters (U/D/N, L/R/N) and digit format

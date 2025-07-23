@@ -25,7 +25,7 @@ struct AddMedicationView: View {
 
     // MARK: body --------------------------------------------------------------
     var body: some View {
-        NavigationStack {
+        NavigationView {
             Form {
                 basicSection
                 timesSection
@@ -59,18 +59,39 @@ struct AddMedicationView: View {
 
     private var timesSection: some View {
         Section("Dose Times  (\(med.times.count)/day)") {
-            ForEach(med.times.indices, id: \.self) { i in
-                DatePicker("",
-                           selection: Binding(
-                               get: { Self.date(from: med.times[i]) },
-                               set: { med.times[i] = Self.comps(from: $0) }),
+            // Add new time interface - shown prominently
+            HStack {
+                DatePicker("New time", selection: $newTime,
                            displayedComponents: .hourAndMinute)
-                .labelsHidden()
+                Button("Add") { 
+                    med.times.append(Self.comps(from: newTime))
+                }
+                .buttonStyle(.borderedProminent)
             }
-
-            DatePicker("Select time", selection: $newTime,
-                       displayedComponents: .hourAndMinute)
-            Button("➕ Add time") { med.times.append(Self.comps(from: newTime)) }
+            
+            // Show existing times with ability to edit and delete
+            if !med.times.isEmpty {
+                ForEach(med.times.indices, id: \.self) { i in
+                    HStack {
+                        DatePicker("Time \(i + 1)",
+                                   selection: Binding(
+                                       get: { Self.date(from: med.times[i]) },
+                                       set: { med.times[i] = Self.comps(from: $0) }),
+                                   displayedComponents: .hourAndMinute)
+                        
+                        Button("Remove") {
+                            med.times.remove(at: i)
+                        }
+                        .foregroundColor(.red)
+                        .buttonStyle(.borderless)
+                    }
+                }
+                .onDelete(perform: deleteTimes)
+            } else {
+                Text("No dose times added yet")
+                    .foregroundColor(.secondary)
+                    .font(.caption)
+            }
         }
     }
 
@@ -87,6 +108,11 @@ struct AddMedicationView: View {
                     .padding(.vertical, 6)
             }
         }
+    }
+    
+    // MARK: - Actions ---------------------------------------------------------
+    private func deleteTimes(offsets: IndexSet) {
+        med.times.remove(atOffsets: offsets)
     }
 
     // MARK: – Weekday picker (owns its own State) -----------------------------
