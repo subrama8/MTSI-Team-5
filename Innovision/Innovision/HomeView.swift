@@ -2,15 +2,23 @@ import SwiftUI
 
 struct HomeView: View {
     @EnvironmentObject private var schedule: MedicationSchedule
+<<<<<<< HEAD
     @EnvironmentObject private var log:       DropLog
     @EnvironmentObject private var device:    DeviceService
     @EnvironmentObject private var conflictDetector: ConflictDetector
 
     @State private var showLogSheet  = false
+=======
+    @EnvironmentObject private var log: DropLog
+    @EnvironmentObject private var device: DeviceService
+    @EnvironmentObject private var conflictDetector: ConflictDetector
+    @State private var showLogSheet = false
+>>>>>>> main
     @State private var showConflicts = false
 
     var body: some View {
         ScrollView {
+<<<<<<< HEAD
             VStack(spacing: 48) {
 
                 // ──  FULL‑WIDTH INNOVISION BANNER  ───────────────────────
@@ -45,6 +53,34 @@ struct HomeView: View {
                     }
                     .buttonStyle(.plain)
                     .padding(.horizontal)
+=======
+            VStack(spacing: 32) {
+                
+                // ——— Conflict Warning ———
+                if conflictDetector.hasHighSeverityConflicts() {
+                    Button {
+                        showConflicts = true
+                    } label: {
+                        HStack {
+                            Image(systemName: "exclamationmark.triangle.fill")
+                                .foregroundColor(.red)
+                            VStack(alignment: .leading) {
+                                Text("Medication Conflicts Detected")
+                                    .font(.headline)
+                                    .foregroundColor(.red)
+                                Text("Tap to view details")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                            Spacer()
+                            Image(systemName: "chevron.right")
+                        }
+                        .padding()
+                        .background(Color.red.opacity(0.1))
+                        .cornerRadius(12)
+                    }
+                    .buttonStyle(.plain)
+>>>>>>> main
                 }
 
                 // ──  MEDICATION PROGRESS CARDS  ─────────────────────────
@@ -85,8 +121,12 @@ struct HomeView: View {
                         .font(.headline)
                 }
                 .toggleStyle(.button)
+<<<<<<< HEAD
                 .tint(.brandPrimary)
                 .padding(.horizontal)
+=======
+                .tint(.skyBlue)
+>>>>>>> main
                 .onChange(of: device.isRunning) { newVal in
                     if newVal {
                         if !device.isConnected { device.connect() }
@@ -113,7 +153,11 @@ struct HomeView: View {
                 .ignoresSafeArea()
         )
         .navigationTitle("Home")
+<<<<<<< HEAD
         .sheet(isPresented: $showLogSheet)  { ManualLogSheet() }
+=======
+        .sheet(isPresented: $showLogSheet) { ManualLogSheet() }
+>>>>>>> main
         .sheet(isPresented: $showConflicts) { ConflictsView() }
     }
 
@@ -126,6 +170,7 @@ struct HomeView: View {
         @EnvironmentObject private var log:       DropLog
         @State private var selected: Medication?
 
+<<<<<<< HEAD
         var body: some View {
             NavigationView {
                 List(schedule.meds) { med in
@@ -134,6 +179,26 @@ struct HomeView: View {
                         Text(med.name)
                         Spacer()
                         if selected?.id == med.id { Image(systemName: "checkmark") }
+=======
+    var body: some View {
+        NavigationView {
+            List(schedule.meds) { med in
+                HStack {
+                    Circle().fill(med.color).frame(width: 16)
+                    Text(med.name)
+                    Spacer()
+                    if selected?.id == med.id { Image(systemName: "checkmark") }
+                }
+                .contentShape(Rectangle())
+                .onTapGesture { selected = med }
+            }
+            .navigationTitle("Select Medication")
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Log") {
+                        if let m = selected { log.record(m, auto: false) }
+                        dismiss()
+>>>>>>> main
                     }
                     .contentShape(Rectangle())
                     .onTapGesture { selected = med }
