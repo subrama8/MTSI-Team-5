@@ -9,6 +9,8 @@ struct HistoryView: View {
 
     /// Pre‑group and sort so the body stays lightweight
     private var dailySections: [(title: String, events: [DropEvent])] {
+        guard !log.events.isEmpty else { return [] }
+        
         let grouped = Dictionary(grouping: log.events) { cal.startOfDay(for: $0.date) }
 
         return grouped.map { day, evts in
@@ -19,15 +21,23 @@ struct HistoryView: View {
                                                        timeStyle: .none)
             return (title, evts.sorted { $0.date > $1.date })
         }
-        .sorted { $0.events.first!.date > $1.events.first!.date }
+        .sorted { $0.events.first?.date ?? Date.distantPast > $1.events.first?.date ?? Date.distantPast }
     }
 
     var body: some View {
         List {
-            ForEach(dailySections, id: \.title) { section in
-                Section(section.title) {
-                    ForEach(section.events) { event in
-                        HistoryRow(event: event)
+            if dailySections.isEmpty {
+                Section {
+                    Text("No medication history yet")
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .center)
+                }
+            } else {
+                ForEach(dailySections, id: \.title) { section in
+                    Section(section.title) {
+                        ForEach(section.events) { event in
+                            HistoryRow(event: event)
+                        }
                     }
                 }
             }

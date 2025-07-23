@@ -20,7 +20,7 @@ enum Frequency: Hashable, Codable {
 }
 
 // ────────── MEDICATION ──────────
-final class Medication: Identifiable, ObservableObject {
+final class Medication: Identifiable, ObservableObject, Equatable {
     let id = UUID()
 
     @Published var name: String
@@ -57,6 +57,11 @@ final class Medication: Identifiable, ObservableObject {
         }
         return times.compactMap(next).min()
     }
+    
+    // MARK: - Equatable
+    static func == (lhs: Medication, rhs: Medication) -> Bool {
+        return lhs.id == rhs.id
+    }
 }
 
 // ────────── DROP LOG ──────────
@@ -72,6 +77,43 @@ final class DropLog: ObservableObject {
 
     func record(_ med: Medication, auto _: Bool) {
         events.append(DropEvent(med: med, date: .now))
+        
+        // Cancel remaining notifications for this medication today
+        cancelRemainingNotifications(for: med)
+    }
+    
+    /// Cancel any remaining notifications for today if medication was logged
+    private func cancelRemainingNotifications(for med: Medication) {
+        let medicationId = med.id.uuidString
+        let now = Date()
+        let calendar = Calendar.current
+        
+        for time in med.times {
+            let timeId = "\(time.hour ?? 0)_\(time.minute ?? 0)"
+            
+            // Check if the current dose time is today
+            guard let doseTime = calendar.date(from: time),
+                  calendar.isDate(doseTime, inSameDayAs: now) else {
+                continue
+            }
+            
+            // Cancel all three notification types if they haven't fired yet
+            switch med.frequency {
+            case .daily:
+                LocalNotificationManager.shared.cancelNotification(id: "\(medicationId)_before_\(timeId)")
+                LocalNotificationManager.shared.cancelNotification(id: "\(medicationId)_exact_\(timeId)")
+                LocalNotificationManager.shared.cancelNotification(id: "\(medicationId)_after_\(timeId)")
+                
+            case .weekly(let days):
+                let currentWeekday = calendar.component(.weekday, from: now)
+                if days.contains(currentWeekday) {
+                    let weekdayTimeId = "\(currentWeekday)_\(timeId)"
+                    LocalNotificationManager.shared.cancelNotification(id: "\(medicationId)_before_\(weekdayTimeId)")
+                    LocalNotificationManager.shared.cancelNotification(id: "\(medicationId)_exact_\(weekdayTimeId)")
+                    LocalNotificationManager.shared.cancelNotification(id: "\(medicationId)_after_\(weekdayTimeId)")
+                }
+            }
+        }
     }
 
     func takenToday(for med: Medication) -> Int {
@@ -116,7 +158,151 @@ final class MedicationSchedule: ObservableObject {
     // MARK: Add + schedule
     func add(_ med: Medication) async {
         meds.append(med)
-        await scheduleNotifications(for: med)
+        await scheduleEnhancedNotifications(for: med)
+    }
+    
+    func updateMedication(_ med: Medication) async {
+        // Cancel existing notifications for this medication
+        await cancelNotifications(for: med)
+        // Schedule new notifications
+        await scheduleEnhancedNotifications(for: med)
+    }
+    
+    func removeMedication(_ med: Medication) async {
+        meds.removeAll { $0.id == med.id }
+        await cancelNotifications(for: med)
+    }
+    
+    private func cancelNotifications(for med: Medication) async {
+        let medicationId = med.id.uuidString
+        for time in med.times {
+            let timeId = "\(time.hour ?? 0)_\(time.minute ?? 0)"
+            
+            switch med.frequency {
+            case .daily:
+                // Cancel all three types of notifications
+                LocalNotificationManager.shared.cancelNotification(id: "\(medicationId)_before_\(timeId)")
+                LocalNotificationManager.shared.cancelNotification(id: "\(medicationId)_exact_\(timeId)")
+                LocalNotificationManager.shared.cancelNotification(id: "\(medicationId)_after_\(timeId)")
+                
+                // Cancel old notification IDs for backwards compatibility
+                LocalNotificationManager.shared.cancelNotification(id: "\(medicationId)_warning_\(timeId)")
+                LocalNotificationManager.shared.cancelNotification(id: "\(medicationId)_missed_\(timeId)")
+                
+            case .weekly(let days):
+                for weekday in days {
+                    let weekdayTimeId = "\(weekday)_\(timeId)"
+                    
+                    // Cancel all three types of notifications
+                    LocalNotificationManager.shared.cancelNotification(id: "\(medicationId)_before_\(weekdayTimeId)")
+                    LocalNotificationManager.shared.cancelNotification(id: "\(medicationId)_exact_\(weekdayTimeId)")
+                    LocalNotificationManager.shared.cancelNotification(id: "\(medicationId)_after_\(weekdayTimeId)")
+                    
+                    // Cancel old notification IDs for backwards compatibility
+                    LocalNotificationManager.shared.cancelNotification(id: "\(medicationId)_warning_\(weekdayTimeId)")
+                    LocalNotificationManager.shared.cancelNotification(id: "\(medicationId)_missed_\(weekdayTimeId)")
+                }
+            }
+        }
+    }
+    
+    /// Enhanced notification scheduling with three-phase alerts (before/at/after)
+    private func scheduleEnhancedNotifications(for med: Medication) async {
+        let notificationManager = LocalNotificationManager.shared
+        
+        for time in med.times {
+            let medicationId = med.id.uuidString
+            let timeId = "\(time.hour ?? 0)_\(time.minute ?? 0)"
+            
+            switch med.frequency {
+            case .daily:
+                // Schedule 10-minute before notification (if enabled)
+                if notificationManager.notifyBefore,
+                   let fireDate = Calendar.current.date(from: Self.offset(time, by: -10)) {
+                    try? await notificationManager.scheduleWithLoggingCheck(
+                        id: "\(medicationId)_before_\(timeId)",
+                        at: fireDate,
+                        title: "Eye‑drop in 10 min: \(med.name)",
+                        body: "Prepare your \(med.name) eye drops",
+                        medicationId: medicationId
+                    )
+                }
+                
+                // Schedule exact time notification (if enabled)
+                if notificationManager.notifyAtTime,
+                   let exactDate = Calendar.current.date(from: time) {
+                    try? await notificationManager.scheduleWithLoggingCheck(
+                        id: "\(medicationId)_exact_\(timeId)",
+                        at: exactDate,
+                        title: "Time for \(med.name)",
+                        body: "Take your eye drops now",
+                        medicationId: medicationId
+                    )
+                }
+                
+                // Schedule 10-minute after notification (if enabled)
+                if notificationManager.notifyAfter,
+                   let fireDate = Calendar.current.date(from: Self.offset(time, by: 10)) {
+                    try? await notificationManager.scheduleWithLoggingCheck(
+                        id: "\(medicationId)_after_\(timeId)",
+                        at: fireDate,
+                        title: "Don't forget: \(med.name)",
+                        body: "Did you take your \(med.name) eye drops?",
+                        medicationId: medicationId
+                    )
+                }
+
+            case .weekly(let days):
+                for weekday in days {
+                    let weekdayTimeId = "\(weekday)_\(timeId)"
+                    
+                    // Schedule 10-minute before notification (if enabled)
+                    if notificationManager.notifyBefore {
+                        var warningComps = Self.offset(time, by: -10)
+                        warningComps.weekday = weekday
+                        if let fireDate = Calendar.current.date(from: warningComps) {
+                            try? await notificationManager.scheduleWithLoggingCheck(
+                                id: "\(medicationId)_before_\(weekdayTimeId)",
+                                at: fireDate,
+                                title: "Eye‑drop in 10 min: \(med.name)",
+                                body: "Prepare your \(med.name) eye drops",
+                                medicationId: medicationId
+                            )
+                        }
+                    }
+                    
+                    // Schedule exact time notification (if enabled)
+                    if notificationManager.notifyAtTime {
+                        var exactComps = time
+                        exactComps.weekday = weekday
+                        if let exactDate = Calendar.current.date(from: exactComps) {
+                            try? await notificationManager.scheduleWithLoggingCheck(
+                                id: "\(medicationId)_exact_\(weekdayTimeId)",
+                                at: exactDate,
+                                title: "Time for \(med.name)",
+                                body: "Take your eye drops now",
+                                medicationId: medicationId
+                            )
+                        }
+                    }
+                    
+                    // Schedule 10-minute after notification (if enabled)
+                    if notificationManager.notifyAfter {
+                        var afterComps = Self.offset(time, by: 10)
+                        afterComps.weekday = weekday
+                        if let fireDate = Calendar.current.date(from: afterComps) {
+                            try? await notificationManager.scheduleWithLoggingCheck(
+                                id: "\(medicationId)_after_\(weekdayTimeId)",
+                                at: fireDate,
+                                title: "Don't forget: \(med.name)",
+                                body: "Did you take your \(med.name) eye drops?",
+                                medicationId: medicationId
+                            )
+                        }
+                    }
+                }
+            }
+        }
     }
 
     /// Creates 10‑minute‑early local notifications for each dose time.
@@ -146,17 +332,29 @@ final class MedicationSchedule: ObservableObject {
         }
     }
 
-    /// Helper to shift minutes
+    /// Helper to shift minutes safely with bounds checking
     private static func offset(_ comps: DateComponents, by minutes: Int) -> DateComponents {
         var c = comps
-        c.minute = (c.minute ?? 0) + minutes
+        let currentMinute = c.minute ?? 0
+        let newMinute = currentMinute + minutes
+        
+        if newMinute < 0 {
+            c.hour = (c.hour ?? 0) - 1
+            c.minute = 60 + newMinute
+        } else if newMinute >= 60 {
+            c.hour = (c.hour ?? 0) + (newMinute / 60)
+            c.minute = newMinute % 60
+        } else {
+            c.minute = newMinute
+        }
+        
         return c
     }
 
     // MARK: Demo seed
     func seedDemoData() async {
         guard meds.isEmpty else { return }
-        let date  = Date().addingTimeInterval(60)
+        let date  = Date().addingTimeInterval(20 * 60) // 20 minutes from now
         let comps = Calendar.current.dateComponents([.hour, .minute], from: date)
         let demo  = Medication(name: "Timolol", color: .blue, times: [comps])
         await add(demo)

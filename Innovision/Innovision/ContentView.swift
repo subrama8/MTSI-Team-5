@@ -3,14 +3,17 @@ import SwiftUI
 struct ContentView: View {
     var body: some View {
         TabView {
-            NavigationStack { HomeView() }
+            NavigationView { HomeView() }
                 .tabItem { Label("Home", systemImage: "house.fill") }
 
-            NavigationStack { ScheduleView() }
+            NavigationView { ScheduleView() }
                 .tabItem { Label("Schedule", systemImage: "calendar") }
 
-            NavigationStack { HistoryView() }
+            NavigationView { HistoryView() }
                 .tabItem { Label("History", systemImage: "clock") }
+                
+            NavigationView { NotificationSettingsView() }
+                .tabItem { Label("Settings", systemImage: "gear") }
         }
         .background(Color.back)
     }

@@ -4,11 +4,39 @@ struct HomeView: View {
     @EnvironmentObject private var schedule: MedicationSchedule
     @EnvironmentObject private var log: DropLog
     @EnvironmentObject private var device: DeviceService
+    @EnvironmentObject private var conflictDetector: ConflictDetector
     @State private var showLogSheet = false
+    @State private var showConflicts = false
 
     var body: some View {
         ScrollView {
             VStack(spacing: 32) {
+                
+                // ——— Conflict Warning ———
+                if conflictDetector.hasHighSeverityConflicts() {
+                    Button {
+                        showConflicts = true
+                    } label: {
+                        HStack {
+                            Image(systemName: "exclamationmark.triangle.fill")
+                                .foregroundColor(.red)
+                            VStack(alignment: .leading) {
+                                Text("Medication Conflicts Detected")
+                                    .font(.headline)
+                                    .foregroundColor(.red)
+                                Text("Tap to view details")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                            Spacer()
+                            Image(systemName: "chevron.right")
+                        }
+                        .padding()
+                        .background(Color.red.opacity(0.1))
+                        .cornerRadius(12)
+                    }
+                    .buttonStyle(.plain)
+                }
 
                 // ——— Rings ———
                 if schedule.meds.isEmpty {
@@ -41,7 +69,7 @@ struct HomeView: View {
                 }
                 .toggleStyle(.button)
                 .tint(.skyBlue)
-                .onChange(of: device.isRunning) { _, newVal in   // iOS 17 syntax
+                .onChange(of: device.isRunning) { newVal in
                     if newVal {
                         if !device.isConnected { device.connect() }
                         device.startDropper()
@@ -62,6 +90,7 @@ struct HomeView: View {
         }
         .navigationTitle("Home")
         .sheet(isPresented: $showLogSheet) { ManualLogSheet() }
+        .sheet(isPresented: $showConflicts) { ConflictsView() }
     }
 }
 
@@ -73,7 +102,7 @@ private struct ManualLogSheet: View {
     @State private var selected: Medication?
 
     var body: some View {
-        NavigationStack {
+        NavigationView {
             List(schedule.meds) { med in
                 HStack {
                     Circle().fill(med.color).frame(width: 16)
