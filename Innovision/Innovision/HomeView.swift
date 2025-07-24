@@ -96,20 +96,26 @@ struct HomeView: View {
                         }
                         .padding(.horizontal)
                         
-                        // Start/Stop plotter button
-                        Button {
-                            Task {
-                                if device.isRunning {
-                                    await device.stopPlotter()
-                                } else {
+                        // Start and Stop plotter buttons
+                        HStack(spacing: 16) {
+                            Button {
+                                Task {
                                     await device.startPlotter()
                                 }
+                            } label: {
+                                Label("Start Plotter", systemImage: "play.fill")
                             }
-                        } label: {
-                            Label(device.isRunning ? "Stop Plotter" : "Start Plotter",
-                                  systemImage: device.isRunning ? "stop.fill" : "play.fill")
+                            .buttonStyle(BigButton())
+                            
+                            Button {
+                                Task {
+                                    await device.stopPlotter()
+                                }
+                            } label: {
+                                Label("Stop Plotter", systemImage: "stop.fill")
+                            }
+                            .buttonStyle(BigButton())
                         }
-                        .buttonStyle(BigButton())
                         .padding(.horizontal)
                         
                         // Refresh status button
