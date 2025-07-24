@@ -218,7 +218,7 @@ struct CameraView: View {
                 
                 // Look for complete JPEG images using start (0xFF 0xD8) and end (0xFF 0xD9) markers
                 if let startRange = buffer.range(of: Data([0xFF, 0xD8])),
-                   let endRange = buffer.range(of: Data([0xFF, 0xD9]), range: startRange.upperBound..<buffer.endIndex) {
+                   let endRange = buffer.range(of: Data([0xFF, 0xD9]), in: startRange.upperBound..<buffer.endIndex) {
                     
                     // Extract complete JPEG data
                     let jpegData = buffer[startRange.lowerBound...endRange.upperBound]
