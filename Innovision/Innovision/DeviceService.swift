@@ -1,6 +1,7 @@
 import Foundation
 import Network
 import SwiftUI
+import Combine
 
 struct PlotterStatus: Codable {
     let status: String
@@ -16,6 +17,11 @@ final class DeviceService: ObservableObject {
     @Published var connectionError: String?
     @Published var lastCommand: String?
     @Published var plotterStatus: String = "unknown"
+    
+    // Camera streaming properties
+    @Published var cameraConnected = false
+    @Published var cameraStreamURL: URL?
+    @Published var discoveredCameraHosts: [String] = []
 
     private let connectionQueue = DispatchQueue(label: "device-connection", qos: .userInitiated)
     
@@ -23,6 +29,10 @@ final class DeviceService: ObservableObject {
     // Check Arduino Serial Monitor for actual IP after WiFi connection
     private let arduinoHost = "192.168.1.60"
     private let arduinoPort: UInt16 = 8080
+    
+    // Camera server discovery
+    private let cameraPort: UInt16 = 8081
+    private var discoveryTimer: Timer?
 
     func connect() {
         guard !isConnected else { return }
@@ -201,5 +211,104 @@ final class DeviceService: ObservableObject {
             print("Failed to parse plotter status: \(error)")
             connectionError = "Failed to parse response"
         }
+    }
+    
+    // MARK: - Camera Discovery and Streaming
+    
+    func startCameraDiscovery() {
+        stopCameraDiscovery()
+        
+        discoveryTimer = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: true) { _ in
+            Task {
+                await self.discoverCameraServers()
+            }
+        }
+        
+        // Run initial discovery
+        Task {
+            await discoverCameraServers()
+        }
+    }
+    
+    func stopCameraDiscovery() {
+        discoveryTimer?.invalidate()
+        discoveryTimer = nil
+    }
+    
+    private func discoverCameraServers() async {
+        var foundHosts: [String] = []
+        
+        // Try common local IP ranges
+        let baseIPs = [
+            "192.168.1.", "192.168.0.", "10.0.0.", "172.16.0."
+        ]
+        
+        await withTaskGroup(of: String?.self) { group in
+            // Check common IP addresses in parallel
+            for baseIP in baseIPs {
+                for i in [1, 100, 101, 102, 103, 104, 105, 110, 150, 200] {
+                    let host = "\(baseIP)\(i)"
+                    group.addTask {
+                        await self.checkCameraServer(host: host)
+                    }
+                }
+            }
+            
+            // Also check localhost
+            group.addTask {
+                await self.checkCameraServer(host: "127.0.0.1")
+            }
+            
+            for await result in group {
+                if let host = result {
+                    foundHosts.append(host)
+                }
+            }
+        }
+        
+        await MainActor.run {
+            discoveredCameraHosts = foundHosts
+            if let firstHost = foundHosts.first {
+                cameraStreamURL = URL(string: "http://\(firstHost):\(cameraPort)/stream.mjpeg")
+                cameraConnected = true
+                print("📷 Camera server discovered at: \(firstHost)")
+            } else {
+                cameraConnected = false
+                cameraStreamURL = nil
+            }
+        }
+    }
+    
+    private func checkCameraServer(host: String) async -> String? {
+        do {
+            let url = URL(string: "http://\(host):\(cameraPort)/status")!
+            let (data, response) = try await URLSession.shared.data(from: url)
+            
+            if let httpResponse = response as? HTTPURLResponse,
+               httpResponse.statusCode == 200,
+               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+               let status = json["status"] as? String,
+               status == "running" {
+                return host
+            }
+        } catch {
+            // Silently ignore connection errors during discovery
+        }
+        return nil
+    }
+    
+    func connectToCamera(host: String? = nil) {
+        if let host = host {
+            cameraStreamURL = URL(string: "http://\(host):\(cameraPort)/stream.mjpeg")
+            cameraConnected = true
+        } else if let firstHost = discoveredCameraHosts.first {
+            cameraStreamURL = URL(string: "http://\(firstHost):\(cameraPort)/stream.mjpeg")
+            cameraConnected = true
+        }
+    }
+    
+    func disconnectFromCamera() {
+        cameraConnected = false
+        cameraStreamURL = nil
     }
 }

@@ -252,6 +252,15 @@ class EyeDetectionModel:
 
         return None, None
 
+    def get_current_frame(self):
+        """
+        Get the current camera frame without processing.
+        
+        Returns:
+            numpy.ndarray: Current frame or None if no frame available
+        """
+        return self.last_frame.copy() if self.last_frame is not None else None
+
     def display_frame_with_packet(self, packet_info, eye_x=None, eye_y=None):
         """
         Display the last captured frame with packet information overlay.
