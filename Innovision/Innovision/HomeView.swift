@@ -2,50 +2,37 @@ import SwiftUI
 
 struct HomeView: View {
     @EnvironmentObject private var schedule: MedicationSchedule
-<<<<<<< HEAD
-    @EnvironmentObject private var log:       DropLog
-    @EnvironmentObject private var device:    DeviceService
-    @EnvironmentObject private var conflictDetector: ConflictDetector
-
-    @State private var showLogSheet  = false
-=======
     @EnvironmentObject private var log: DropLog
     @EnvironmentObject private var device: DeviceService
     @EnvironmentObject private var conflictDetector: ConflictDetector
-    @State private var showLogSheet = false
->>>>>>> main
+
+    @State private var showLogSheet  = false
     @State private var showConflicts = false
 
     var body: some View {
         ScrollView {
-<<<<<<< HEAD
             VStack(spacing: 48) {
 
-                // ──  FULL‑WIDTH INNOVISION BANNER  ───────────────────────
+                // Brand banner
                 Image("innovisionlogo")
                     .resizable()
                     .scaledToFit()
                     .frame(maxWidth: .infinity)
-                    .frame(height: 100)        // ⬅️  super‑sized banner
+                    .frame(height: 100)
                     .padding(.horizontal, 4)
 
-                // ──  CONFLICT BANNER  ────────────────────────────────────
+                // Conflict warning
                 if conflictDetector.hasHighSeverityConflicts() {
                     Button { showConflicts = true } label: {
                         HStack(spacing: 12) {
                             Image(systemName: "exclamationmark.triangle.fill")
                                 .foregroundColor(.white)
                             VStack(alignment: .leading, spacing: 2) {
-                                Text("High‑severity conflicts detected")
-                                    .font(.headline)
-                                Text("Tap to review details")
-                                    .font(.caption)
-                                    .opacity(0.9)
+                                Text("High‑severity conflicts detected").font(.headline)
+                                Text("Tap to review details").font(.caption).opacity(0.9)
                             }
                             Spacer()
-                            Image(systemName: "chevron.right")
-                                .font(.caption)
-                                .opacity(0.8)
+                            Image(systemName: "chevron.right").font(.caption).opacity(0.8)
                         }
                         .padding()
                         .background(Color.red)
@@ -53,58 +40,25 @@ struct HomeView: View {
                     }
                     .buttonStyle(.plain)
                     .padding(.horizontal)
-=======
-            VStack(spacing: 32) {
-                
-                // ——— Conflict Warning ———
-                if conflictDetector.hasHighSeverityConflicts() {
-                    Button {
-                        showConflicts = true
-                    } label: {
-                        HStack {
-                            Image(systemName: "exclamationmark.triangle.fill")
-                                .foregroundColor(.red)
-                            VStack(alignment: .leading) {
-                                Text("Medication Conflicts Detected")
-                                    .font(.headline)
-                                    .foregroundColor(.red)
-                                Text("Tap to view details")
-                                    .font(.caption)
-                                    .foregroundColor(.secondary)
-                            }
-                            Spacer()
-                            Image(systemName: "chevron.right")
-                        }
-                        .padding()
-                        .background(Color.red.opacity(0.1))
-                        .cornerRadius(12)
-                    }
-                    .buttonStyle(.plain)
->>>>>>> main
                 }
 
-                // ──  MEDICATION PROGRESS CARDS  ─────────────────────────
+                // Progress cards
                 if schedule.meds.isEmpty {
                     Text("Add a medication to get started!")
                         .foregroundColor(.secondary)
                 }
 
                 ForEach(schedule.meds) { med in
-                    let expected  = schedule.expectedDoses(for: med)
-                    let taken     = log.takenToday(for: med)
-                    let progress  = expected == 0 ? 0 : Double(taken) / Double(expected)
-                    let allDone   = expected > 0 && taken >= expected
+                    let expected = schedule.expectedDoses(for: med)
+                    let taken    = log.takenToday(for: med)
+                    let progress = expected == 0 ? 0 : Double(taken) / Double(expected)
+                    let allDone  = expected > 0 && taken >= expected
 
                     VStack(spacing: 16) {
                         Text(med.name).font(.headline)
-
-                        ProgressRing(progress: progress,
-                                     baseColor: med.color,
-                                     allDone: allDone)
-
+                        ProgressRing(progress: progress, baseColor: med.color, allDone: allDone)
                         Text("\(taken)/\(expected) logged today")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
+                            .font(.caption).foregroundColor(.secondary)
                     }
                     .padding(.vertical, 28)
                     .frame(maxWidth: .infinity)
@@ -114,21 +68,17 @@ struct HomeView: View {
                     .padding(.horizontal)
                 }
 
-                // ──  DEVICE TOGGLE  ────────────────────────────────────
+                // Device toggle
                 Toggle(isOn: $device.isRunning) {
                     Label(device.isRunning ? "Running" : "Off",
                           systemImage: device.isRunning ? "drop.fill" : "pause.circle")
                         .font(.headline)
                 }
                 .toggleStyle(.button)
-<<<<<<< HEAD
                 .tint(.brandPrimary)
                 .padding(.horizontal)
-=======
-                .tint(.skyBlue)
->>>>>>> main
-                .onChange(of: device.isRunning) { newVal in
-                    if newVal {
+                .onChange(of: device.isRunning) { running in
+                    if running {
                         if !device.isConnected { device.connect() }
                         device.startDropper()
                     } else {
@@ -136,10 +86,8 @@ struct HomeView: View {
                     }
                 }
 
-                // ──  MANUAL‑LOG BUTTON  ────────────────────────────────
-                Button {
-                    showLogSheet = true
-                } label: {
+                // Manual log button
+                Button { showLogSheet = true } label: {
                     Label("Log a Drop", systemImage: "plus")
                 }
                 .buttonStyle(BigButton())
@@ -153,24 +101,17 @@ struct HomeView: View {
                 .ignoresSafeArea()
         )
         .navigationTitle("Home")
-<<<<<<< HEAD
         .sheet(isPresented: $showLogSheet)  { ManualLogSheet() }
-=======
-        .sheet(isPresented: $showLogSheet) { ManualLogSheet() }
->>>>>>> main
         .sheet(isPresented: $showConflicts) { ConflictsView() }
     }
 
-    //──────────────────────────────────────────────────────────
-    // MARK: Manual log sheet (MUST be in the build target)
-    //──────────────────────────────────────────────────────────
+    // Manual‑log sheet
     private struct ManualLogSheet: View {
         @Environment(\.dismiss)          private var dismiss
         @EnvironmentObject private var schedule: MedicationSchedule
-        @EnvironmentObject private var log:       DropLog
+        @EnvironmentObject private var log: DropLog
         @State private var selected: Medication?
 
-<<<<<<< HEAD
         var body: some View {
             NavigationView {
                 List(schedule.meds) { med in
@@ -179,26 +120,6 @@ struct HomeView: View {
                         Text(med.name)
                         Spacer()
                         if selected?.id == med.id { Image(systemName: "checkmark") }
-=======
-    var body: some View {
-        NavigationView {
-            List(schedule.meds) { med in
-                HStack {
-                    Circle().fill(med.color).frame(width: 16)
-                    Text(med.name)
-                    Spacer()
-                    if selected?.id == med.id { Image(systemName: "checkmark") }
-                }
-                .contentShape(Rectangle())
-                .onTapGesture { selected = med }
-            }
-            .navigationTitle("Select Medication")
-            .toolbar {
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Log") {
-                        if let m = selected { log.record(m, auto: false) }
-                        dismiss()
->>>>>>> main
                     }
                     .contentShape(Rectangle())
                     .onTapGesture { selected = med }
@@ -219,7 +140,4 @@ struct HomeView: View {
             }
         }
     }
-
 }
-
-// ── ManualLogSheet remains unchanged, keep it in this file or in its own file.
