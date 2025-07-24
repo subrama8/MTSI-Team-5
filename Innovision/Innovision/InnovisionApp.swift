@@ -1,5 +1,25 @@
 import SwiftUI
 import UserNotifications
+import UIKit
+
+class AppDelegate: NSObject, UIApplicationDelegate {
+    func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey : Any]? = nil) -> Bool {
+        return true
+    }
+    
+    func application(_ application: UIApplication, didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data) {
+        LocalNotificationManager.shared.handlePushRegistration(result: .success(deviceToken))
+    }
+    
+    func application(_ application: UIApplication, didFailToRegisterForRemoteNotificationsWithError error: Error) {
+        LocalNotificationManager.shared.handlePushRegistration(result: .failure(error))
+    }
+    
+    func application(_ application: UIApplication, didReceiveRemoteNotification userInfo: [AnyHashable : Any], fetchCompletionHandler completionHandler: @escaping (UIBackgroundFetchResult) -> Void) {
+        LocalNotificationManager.shared.handlePushNotification(userInfo: userInfo)
+        completionHandler(.newData)
+    }
+}
 
 @main
 struct InnovisionApp: App {
@@ -15,8 +35,8 @@ struct InnovisionApp: App {
     @UIApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
 
     init() {
-        notificationManager.registerCategories()
-        UNUserNotificationCenter.current().delegate = notificationManager
+        LocalNotificationManager.shared.registerCategories()
+        UNUserNotificationCenter.current().delegate = LocalNotificationManager.shared
     }
 
     var body: some Scene {

@@ -88,7 +88,7 @@ final class DropLog: ObservableObject {
 
     func takenToday(for med: Medication) -> Int {
         let cal = Calendar.current
-        events.filter { $0.med.id == med.id && cal.isDateInToday($0.date) }.count
+        return events.filter { $0.med.id == med.id && cal.isDateInToday($0.date) }.count
     }
 
     func streak(for med: Medication, schedule: MedicationSchedule) -> Int {

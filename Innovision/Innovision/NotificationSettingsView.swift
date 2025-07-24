@@ -143,3 +143,74 @@ struct NotificationSettingsView: View {
         }
     }
 }
+
+struct AddCaregiverSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject private var caregiverService: CaregiverService
+    
+    @State private var name = ""
+    @State private var email = ""
+    @State private var phone = ""
+    @State private var relationship = "Family Member"
+    @State private var isEmergencyContact = false
+    
+    private let relationships = [
+        "Family Member", "Spouse", "Child", "Parent", "Sibling",
+        "Friend", "Healthcare Provider", "Caregiver", "Other"
+    ]
+    
+    var body: some View {
+        NavigationView {
+            Form {
+                Section("Contact Information") {
+                    TextField("Name", text: $name)
+                    TextField("Email", text: $email)
+                        .keyboardType(.emailAddress)
+                        .autocapitalization(.none)
+                    TextField("Phone", text: $phone)
+                        .keyboardType(.phonePad)
+                }
+                
+                Section("Details") {
+                    Picker("Relationship", selection: $relationship) {
+                        ForEach(relationships, id: \.self) { rel in
+                            Text(rel).tag(rel)
+                        }
+                    }
+                    
+                    Toggle("Emergency Contact", isOn: $isEmergencyContact)
+                }
+                
+                if isEmergencyContact {
+                    Section("Emergency Contact") {
+                        Label("This person will receive critical alerts immediately", 
+                              systemImage: "exclamationmark.triangle.fill")
+                            .foregroundColor(.orange)
+                            .font(.caption)
+                    }
+                }
+            }
+            .navigationTitle("Add Caregiver")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Add") {
+                        let caregiver = CaregiverContact(
+                            name: name,
+                            email: email,
+                            phone: phone,
+                            relationship: relationship,
+                            isEmergencyContact: isEmergencyContact
+                        )
+                        caregiverService.addCaregiver(caregiver)
+                        dismiss()
+                    }
+                    .disabled(name.isEmpty || email.isEmpty || phone.isEmpty)
+                }
+            }
+        }
+    }
+}
