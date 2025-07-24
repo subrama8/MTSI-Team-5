@@ -141,9 +141,51 @@ struct CameraView: View {
     private func startMJPEGStream(url: URL) {
         stopMJPEGStream()
         
-        streamingTask = Task {
-            await streamMJPEG(from: url)
+        // Try simple frame fetching first (more reliable)
+        let testURL = url.absoluteString.replacingOccurrences(of: "/stream.mjpeg", with: "/test")
+        if let frameURL = URL(string: testURL) {
+            streamingTask = Task {
+                await streamFrames(from: frameURL)
+            }
+        } else {
+            // Fallback to MJPEG streaming
+            streamingTask = Task {
+                await streamMJPEG(from: url)
+            }
         }
+    }
+    
+    private func streamFrames(from url: URL) async {
+        isStreaming = true
+        print("🖥️ Starting frame streaming from: \(url)")
+        
+        while !Task.isCancelled && isStreaming {
+            do {
+                let (data, response) = try await URLSession.shared.data(from: url)
+                
+                if let httpResponse = response as? HTTPURLResponse,
+                   httpResponse.statusCode == 200,
+                   let image = UIImage(data: data) {
+                    
+                    await MainActor.run {
+                        self.currentImage = image
+                        print("📸 Frame fetched - Size: \(image.size)")
+                    }
+                }
+                
+                // Wait before next frame (10 FPS)
+                try await Task.sleep(nanoseconds: 100_000_000)
+                
+            } catch {
+                if !Task.isCancelled {
+                    print("⚠️ Frame fetch error: \(error)")
+                    // Wait longer on error
+                    try? await Task.sleep(nanoseconds: 1_000_000_000)
+                }
+            }
+        }
+        
+        print("🖥️ Frame streaming stopped")
     }
     
     private func stopMJPEGStream() {
@@ -168,40 +210,34 @@ struct CameraView: View {
             
             print("✅ Connected to MJPEG stream")
             var buffer = Data()
-            let boundary = Data("--jpgboundary".utf8)
-            let doubleNewline = Data("\r\n\r\n".utf8)
-            let jpegStart = Data([0xFF, 0xD8]) // JPEG start marker
             
             for try await byte in asyncBytes {
                 if Task.isCancelled { break }
                 
                 buffer.append(byte)
                 
-                // Look for JPEG data directly (more reliable than boundary parsing)
-                if let jpegStartIndex = buffer.range(of: jpegStart)?.lowerBound {
-                    // Found start of JPEG, look for end
-                    let jpegData = buffer[jpegStartIndex...]
+                // Look for complete JPEG images using start (0xFF 0xD8) and end (0xFF 0xD9) markers
+                if let startRange = buffer.range(of: Data([0xFF, 0xD8])),
+                   let endRange = buffer.range(of: Data([0xFF, 0xD9]), range: startRange.upperBound..<buffer.endIndex) {
                     
-                    // Try to create image from current data
-                    let testData = Data(jpegData.prefix(min(jpegData.count, 500000))) // Max 500KB per frame
+                    // Extract complete JPEG data
+                    let jpegData = buffer[startRange.lowerBound...endRange.upperBound]
                     
-                    if let image = UIImage(data: testData) {
+                    // Try to create image
+                    if let image = UIImage(data: jpegData) {
                         await MainActor.run {
                             self.currentImage = image
-                            print("📸 Frame updated - Image size: \(image.size)")
+                            print("📸 Frame updated - Size: \(image.size)")
                         }
-                        
-                        // Clear buffer after successful image
-                        buffer.removeAll()
-                    } else if jpegData.count > 1000000 { // 1MB limit
-                        // Buffer too large, clear it
-                        buffer.removeAll()
                     }
+                    
+                    // Remove processed data from buffer
+                    buffer.removeSubrange(startRange.lowerBound...endRange.upperBound)
                 }
                 
-                // Prevent excessive memory usage
-                if buffer.count > 2000000 { // 2MB absolute limit
-                    print("⚠️ Buffer overflow, clearing...")
+                // Prevent buffer from growing too large
+                if buffer.count > 1000000 { // 1MB limit
+                    print("⚠️ Buffer too large, clearing...")
                     buffer.removeAll()
                 }
             }

@@ -192,7 +192,12 @@ class CameraStreamServer:
         self.capture_thread = None
         self.eye_model = None
         
-        # Initialize eye detection model
+        # Initialize eye detection model with better error handling
+        print(f"🎥 Attempting to initialize camera (index {camera_index})...")
+        
+        # First, let's check available cameras
+        self._check_available_cameras()
+        
         try:
             self.eye_model = EyeDetectionModel(
                 frame_width=FRAME_WIDTH,
@@ -201,10 +206,42 @@ class CameraStreamServer:
                 deadzone_pixels=deadzone_pixels,
                 reference_offset_pixels=REFERENCE_OFFSET_PIXELS
             )
-            print("✓ Eye detection model initialized")
+            print("✅ Eye detection model initialized successfully")
         except Exception as e:
-            print(f"✗ Failed to initialize eye detection model: {e}")
+            print(f"❌ Failed to initialize eye detection model: {e}")
+            print(f"💡 Troubleshooting tips:")
+            print(f"   - Camera index {camera_index} might not exist")
+            print(f"   - Try camera index 0 (built-in camera)")
+            print(f"   - Close other apps using the camera")
+            print(f"   - Check camera permissions in System Preferences")
+            print(f"   - Restart the terminal/script")
             raise
+    
+    def _check_available_cameras(self):
+        """Check which camera indices are available."""
+        print("🔍 Checking available cameras...")
+        available_cameras = []
+        
+        for i in range(5):  # Check indices 0-4
+            cap = cv2.VideoCapture(i)
+            if cap.isOpened():
+                ret, frame = cap.read()
+                if ret and frame is not None:
+                    available_cameras.append(i)
+                    print(f"   ✅ Camera {i}: Available ({frame.shape[1]}x{frame.shape[0]})")
+                else:
+                    print(f"   ❌ Camera {i}: Can't read frames")
+                cap.release()
+            else:
+                print(f"   ❌ Camera {i}: Not available")
+        
+        if not available_cameras:
+            print("⚠️ No cameras found! Make sure:")
+            print("   - Camera is connected")
+            print("   - No other apps are using it")
+            print("   - Camera permissions are granted")
+        else:
+            print(f"📹 Available cameras: {available_cameras}")
     
     def start(self):
         """Start camera capture."""
@@ -234,63 +271,123 @@ class CameraStreamServer:
         """Main camera capture loop."""
         frame_count = 0
         last_eye_status = None
+        consecutive_errors = 0
+        max_consecutive_errors = 10
+        
+        print("🎬 Starting camera capture loop...")
         
         try:
             while self.running:
                 frame_count += 1
                 
-                # Get eye location and frame
                 try:
-                    eye_x, eye_y = self.eye_model.get_eye_location(debug_display=False)
-                except Exception as e:
-                    print(f"Error getting eye location: {e}")
+                    # Get eye location and frame with detailed error handling
                     eye_x, eye_y = None, None
-                
-                # Get the current frame for streaming
-                frame = self.eye_model.get_current_frame()
-                if frame is None:
-                    time.sleep(1/30)
-                    continue
-                
-                # Create annotated frame for streaming
-                annotated_frame = frame.copy()
-                
-                # Add eye tracking visualizations
-                if eye_x is not None and eye_y is not None:
-                    # Draw eye center
-                    cv2.circle(annotated_frame, (int(eye_x), int(eye_y)), 5, (0, 255, 0), -1)
+                    frame = None
                     
-                    # Calculate directional packet info
-                    packet = self._calculate_directional_packet(eye_x, eye_y)
-                    status_text = f"Eye Detected - {packet}"
-                    if last_eye_status != "detected":
-                        last_eye_status = "detected"
-                else:
-                    packet = "N000N000"
-                    status_text = "No Eye Detected"
-                    if last_eye_status != "not_detected":
-                        last_eye_status = "not_detected"
+                    try:
+                        eye_x, eye_y = self.eye_model.get_eye_location(debug_display=False)
+                        consecutive_errors = 0  # Reset error counter on success
+                    except Exception as e:
+                        consecutive_errors += 1
+                        if consecutive_errors <= 3:  # Only log first few errors
+                            print(f"⚠️ Error getting eye location (attempt {consecutive_errors}): {e}")
+                        
+                        if consecutive_errors >= max_consecutive_errors:
+                            print(f"❌ Too many consecutive errors ({consecutive_errors}), stopping capture")
+                            break
+                    
+                    # Get the current frame for streaming
+                    try:
+                        frame = self.eye_model.get_current_frame()
+                    except Exception as e:
+                        print(f"⚠️ Error getting current frame: {e}")
+                        time.sleep(1/30)
+                        continue
+                    
+                    if frame is None:
+                        if frame_count % 30 == 0:  # Log every 30 frames
+                            print(f"⚠️ No frame available at frame {frame_count}")
+                        time.sleep(1/30)
+                        continue
+                    
+                    # Create annotated frame for streaming
+                    try:
+                        annotated_frame = frame.copy()
+                    except Exception as e:
+                        print(f"⚠️ Error copying frame: {e}")
+                        continue
+                    
+                    # Add eye tracking visualizations
+                    if eye_x is not None and eye_y is not None:
+                        # Draw eye center
+                        cv2.circle(annotated_frame, (int(eye_x), int(eye_y)), 5, (0, 255, 0), -1)
+                        
+                        # Calculate directional packet info
+                        packet = self._calculate_directional_packet(eye_x, eye_y)
+                        status_text = f"Eye Detected - {packet}"
+                        if last_eye_status != "detected":
+                            last_eye_status = "detected"
+                    else:
+                        packet = "N000N000"
+                        status_text = "No Eye Detected"
+                        if last_eye_status != "not_detected":
+                            last_eye_status = "not_detected"
+                    
+                    # Add reference point and deadzone visualization
+                    ref_x = FRAME_WIDTH // 2
+                    ref_y = FRAME_HEIGHT // 2 - REFERENCE_OFFSET_PIXELS
+                    cv2.circle(annotated_frame, (ref_x, ref_y), 3, (255, 0, 0), -1)  # Blue reference point
+                    cv2.circle(annotated_frame, (ref_x, ref_y), self.deadzone_pixels, (255, 0, 0), 2)  # Blue deadzone circle
+                    
+                    # Add text overlay
+                    cv2.putText(annotated_frame, status_text, (10, 30), 
+                               cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+                    cv2.putText(annotated_frame, f"Frame: {frame_count} | iOS Stream Active", (10, 60), 
+                               cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
                 
-                # Add reference point and deadzone visualization
-                ref_x = FRAME_WIDTH // 2
-                ref_y = FRAME_HEIGHT // 2 - REFERENCE_OFFSET_PIXELS
-                cv2.circle(annotated_frame, (ref_x, ref_y), 3, (255, 0, 0), -1)  # Blue reference point
-                cv2.circle(annotated_frame, (ref_x, ref_y), self.deadzone_pixels, (255, 0, 0), 2)  # Blue deadzone circle
+                    # Update latest frame for streaming
+                    with self.frame_lock:
+                        self.latest_frame = annotated_frame
+                    
+                    # Show local preview window (disabled due to macOS OpenCV issues)
+                    # try:
+                    #     cv2.imshow('Camera Server Preview', annotated_frame)
+                    #     key = cv2.waitKey(1) & 0xFF
+                    #     if key == ord('q'):
+                    #         print("Local preview window closed")
+                    #         self.running = False
+                    #         break
+                    # except Exception as e:
+                    #     print(f"⚠️ Error showing preview window: {e}")
+                    
+                    # Show frame info instead of preview window
+                    if frame_count % 30 == 0:  # Every 30 frames (1 second at 30fps)
+                        print(f"📸 Frame {frame_count}: {status_text}")
+                    
+                    time.sleep(1/30)  # 30 FPS
                 
-                # Add text overlay
-                cv2.putText(annotated_frame, status_text, (10, 30), 
-                           cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
-                cv2.putText(annotated_frame, f"Frame: {frame_count}", (10, 60), 
-                           cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
-                
-                # Update latest frame for streaming
-                with self.frame_lock:
-                    self.latest_frame = annotated_frame
-                
-                time.sleep(1/30)  # 30 FPS
+                except Exception as e:
+                    consecutive_errors += 1
+                    if consecutive_errors <= 3:
+                        print(f"⚠️ Error in capture loop iteration {frame_count}: {e}")
+                    
+                    if consecutive_errors >= max_consecutive_errors:
+                        print(f"❌ Too many consecutive errors in capture loop, stopping")
+                        break
+                    
+                    time.sleep(1/30)  # Wait before retrying
                 
         except Exception as e:
-            print(f"Camera capture error: {e}")
+            print(f"❌ Fatal camera capture error: {e}")
+            import traceback
+            traceback.print_exc()
+        finally:
+            print("🎬 Camera capture loop ending...")
+            try:
+                cv2.destroyAllWindows()
+            except:
+                pass
     
     def _calculate_directional_packet(self, eye_x, eye_y):
         """Calculate directional packet from eye coordinates."""
@@ -329,8 +426,22 @@ def get_local_ip():
 
 def main():
     """Main function to run the camera HTTP server."""
+    import sys
+    
     print("🚀 Eye Tracking Camera HTTP Server")
     print("=" * 40)
+    
+    # Allow camera index to be specified as command line argument
+    camera_index = CAMERA_INDEX
+    if len(sys.argv) > 1:
+        try:
+            camera_index = int(sys.argv[1])
+            print(f"📹 Using camera index {camera_index} from command line")
+        except ValueError:
+            print(f"⚠️ Invalid camera index '{sys.argv[1]}', using default: {CAMERA_INDEX}")
+    else:
+        print(f"📹 Using default camera index: {CAMERA_INDEX}")
+        print(f"💡 To use different camera: python3 camera_http_server.py <camera_index>")
     
     camera_server = None
     http_server = None
@@ -370,8 +481,8 @@ def main():
     atexit.register(cleanup)
     
     try:
-        # Initialize camera server
-        camera_server = CameraStreamServer()
+        # Initialize camera server with specified camera index
+        camera_server = CameraStreamServer(camera_index=camera_index)
         camera_server.start()
         
         # Initialize HTTP server
