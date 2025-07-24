@@ -22,30 +22,37 @@ import atexit
 import signal
 from eye_detection_model import EyeDetectionModel
 
+# Global configuration
+REFERENCE_OFFSET_PIXELS = 210  # Pixels above center for target reference point
+
 
 def find_arduino_port():
     """
     Automatically detect Arduino serial port.
-    
+
     Returns:
         str: Arduino port path, or None if not found
     """
     ports = serial.tools.list_ports.comports()
-    
+
     # Look for common Arduino identifiers
     for port in ports:
         port_name = port.device.lower()
         description = (port.description or "").lower()
-        
+
         # Check for Arduino-like ports
-        if ('usbmodem' in port_name or 
-            'arduino' in description or 
-            'ch340' in description or 
-            'ch341' in description or
-            'ftdi' in description):
-            print(f"🔍 Found potential Arduino port: {port.device} ({port.description})")
+        if (
+            "usbmodem" in port_name
+            or "arduino" in description
+            or "ch340" in description
+            or "ch341" in description
+            or "ftdi" in description
+        ):
+            print(
+                f"🔍 Found potential Arduino port: {port.device} ({port.description})"
+            )
             return port.device
-    
+
     print("⚠️ No Arduino port detected automatically")
     return None
 
@@ -70,7 +77,7 @@ class ArduinoPWMSerialOutput:
         self.baud_rate = baud_rate
         self.deadzone_pixels = deadzone_pixels
         self.arduino = None
-        
+
         if serial_port:
             print(f"Serial port: {serial_port}, baud rate: {baud_rate}")
             try:
@@ -86,7 +93,10 @@ class ArduinoPWMSerialOutput:
 
         # Initialize eye detection model
         try:
-            self.eye_model = EyeDetectionModel(deadzone_pixels=self.deadzone_pixels)
+            self.eye_model = EyeDetectionModel(
+                deadzone_pixels=self.deadzone_pixels,
+                reference_offset_pixels=REFERENCE_OFFSET_PIXELS,
+            )
             print("✓ Eye detection model initialized")
         except Exception as e:
             print(f"✗ Failed to initialize eye detection model: {e}")
@@ -96,16 +106,16 @@ class ArduinoPWMSerialOutput:
         self.frame_w = self.eye_model.frame_w
         self.frame_h = self.eye_model.frame_h
         print(f"✓ Camera resolution: {self.frame_w}x{self.frame_h}")
-        
+
         # Cleanup tracking
         self._cleanup_called = False
         self._cleanup_lock = threading.Lock()
-        
+
         # Register cleanup handlers
         atexit.register(self.cleanup)
         signal.signal(signal.SIGINT, self._signal_handler)
         signal.signal(signal.SIGTERM, self._signal_handler)
-        
+
         print("Eye tracking system ready!")
 
     def _calculate_directional_packet(self, eye_x, eye_y):
@@ -119,14 +129,18 @@ class ArduinoPWMSerialOutput:
         Returns:
             str: 8-character directional packet
         """
-        # Compute deltas with scaling
-        dx = eye_x - self.frame_w // 2  # + = right,  - = left
-        dy = eye_y - self.frame_h // 2  # + = down,   - = up
+        # Reference point is REFERENCE_OFFSET_PIXELS above center (after 180-degree rotation)
+        reference_x = self.frame_w // 2
+        reference_y = self.frame_h // 2 - REFERENCE_OFFSET_PIXELS
+
+        # Compute deltas relative to reference point
+        dx = eye_x - reference_x  # + = right,  - = left
+        dy = eye_y - reference_y  # + = down,   - = up
 
         # Check if within deadzone
-        distance = (dx ** 2 + dy ** 2) ** 0.5
+        distance = (dx**2 + dy**2) ** 0.5
         if distance <= self.deadzone_pixels:
-            return "N000N000"  # No movement within deadzone
+            return "U000L000"  # Eye detected and in target zone
 
         dir_v = "U" if dy <= 0 else "D"
         dir_h = "L" if dx <= 0 else "R"
@@ -145,12 +159,13 @@ class ArduinoPWMSerialOutput:
         """
         if self.arduino is None:
             return
-            
+
         try:
             if not self.arduino.is_open:
                 print("⚠️  Arduino connection closed - attempting to reconnect...")
                 self.arduino.open()
             self.arduino.write(packet.encode())
+            self.arduino.flush()  # Ensure packet is sent immediately
         except Exception as e:
             print(f"⚠️  Failed to send packet '{packet}': {e}")
             # Try to reconnect
@@ -159,7 +174,10 @@ class ArduinoPWMSerialOutput:
                 if self.arduino:
                     self.arduino.close()
                 import serial
-                self.arduino = serial.Serial(self.serial_port, self.baud_rate, timeout=1)
+
+                self.arduino = serial.Serial(
+                    self.serial_port, self.baud_rate, timeout=1
+                )
                 print("✓ Reconnection successful")
             except Exception as reconnect_error:
                 print(f"❌ Reconnection failed: {reconnect_error}")
@@ -180,12 +198,10 @@ class ArduinoPWMSerialOutput:
         try:
             while True:
                 loop_count += 1
-                
+
                 # Get eye location from model
                 try:
-                    eye_x, eye_y = self.eye_model.get_eye_location(
-                        debug_display=False
-                    )
+                    eye_x, eye_y = self.eye_model.get_eye_location(debug_display=False)
                 except Exception as e:
                     print(f"Error getting eye location: {e}")
                     eye_x, eye_y = None, None
@@ -214,6 +230,7 @@ class ArduinoPWMSerialOutput:
                 # Check for quit command (only if debug display is enabled)
                 if debug_display:
                     import cv2
+
                     key = cv2.waitKey(1) & 0xFF
                     if key == ord("q"):
                         print("Quit key pressed")
@@ -232,40 +249,40 @@ class ArduinoPWMSerialOutput:
         print(f"\n🛑 Received signal {signum}, initiating cleanup...")
         self.cleanup()
         sys.exit(0)
-    
+
     def cleanup(self):
         """Clean up all resources with comprehensive error handling."""
         with self._cleanup_lock:
             if self._cleanup_called:
                 return
             self._cleanup_called = True
-        
+
         print("\n🧹 Starting comprehensive cleanup...")
-        
+
         # Step 1: Send neutral signal to Arduino before shutdown
         try:
-            if hasattr(self, 'arduino') and self.arduino and self.arduino.is_open:
+            if hasattr(self, "arduino") and self.arduino and self.arduino.is_open:
                 self.arduino.write(b"N000N000")  # Send neutral signal
                 self.arduino.flush()  # Ensure data is sent
                 time.sleep(0.1)  # Give Arduino time to process
                 print("✓ Sent neutral signal to Arduino")
         except Exception as e:
             print(f"⚠️  Error sending neutral signal: {e}")
-        
+
         # Step 2: Clean up eye model (includes camera and MediaPipe)
         try:
-            if hasattr(self, 'eye_model') and self.eye_model:
+            if hasattr(self, "eye_model") and self.eye_model:
                 self.eye_model.cleanup()
                 self.eye_model = None
                 print("✓ Eye detection model cleaned up")
         except Exception as e:
             print(f"⚠️  Error cleaning up eye model: {e}")
-        
+
         # Step 3: Close Arduino connection with multiple attempts
         arduino_closed = False
         for attempt in range(3):
             try:
-                if hasattr(self, 'arduino') and self.arduino:
+                if hasattr(self, "arduino") and self.arduino:
                     if self.arduino.is_open:
                         self.arduino.close()
                     self.arduino = None
@@ -275,13 +292,14 @@ class ArduinoPWMSerialOutput:
             except Exception as e:
                 print(f"⚠️  Arduino close attempt {attempt + 1} failed: {e}")
                 time.sleep(0.1)
-        
+
         if not arduino_closed:
             print("⚠️  Warning: Arduino connection may not have been fully closed")
-        
+
         # Step 4: Final OpenCV cleanup
         try:
             import cv2
+
             cv2.destroyAllWindows()
             # Multiple waitKey calls to ensure cleanup
             for _ in range(10):
@@ -289,17 +307,18 @@ class ArduinoPWMSerialOutput:
             print("✓ Final OpenCV cleanup completed")
         except Exception as e:
             print(f"⚠️  Error in final OpenCV cleanup: {e}")
-        
+
         # Step 5: Force garbage collection
         try:
             import gc
+
             gc.collect()
             print("✓ Garbage collection completed")
         except Exception as e:
             print(f"⚠️  Error during garbage collection: {e}")
-        
+
         print("✅ Comprehensive cleanup complete")
-    
+
     def __del__(self):
         """Destructor to ensure cleanup on object deletion."""
         try:
@@ -312,7 +331,7 @@ def main():
     """Main function to run the eye tracking system with comprehensive error handling."""
     print("🚀 Arduino Eye Tracking System")
     print("=" * 40)
-    
+
     controller = None
     try:
         # Setup signal handlers for graceful shutdown
@@ -321,25 +340,28 @@ def main():
             if controller:
                 controller.cleanup()
             sys.exit(0)
-        
+
         signal.signal(signal.SIGINT, signal_handler_main)
         signal.signal(signal.SIGTERM, signal_handler_main)
-        
+
         # Automatically detect Arduino port
         arduino_port = find_arduino_port()
         if not arduino_port:
-            print(f"💡 Available ports: {[port.device for port in serial.tools.list_ports.comports()]}")
+            print(
+                f"💡 Available ports: {[port.device for port in serial.tools.list_ports.comports()]}"
+            )
             print("📺 No Arduino detected - continuing with camera display only")
-        
+
         # Create and run the Arduino PWM serial output controller
         controller = ArduinoPWMSerialOutput(arduino_port)
         controller.run(debug_display=True)
-        
+
     except KeyboardInterrupt:
         print("\n🛑 Program stopped by user")
     except Exception as e:
         print(f"❌ Unexpected error: {e}")
         import traceback
+
         traceback.print_exc()
     finally:
         # Ensure cleanup happens even if controller creation failed
@@ -348,16 +370,17 @@ def main():
                 controller.cleanup()
             except Exception as cleanup_error:
                 print(f"⚠️  Error during final cleanup: {cleanup_error}")
-        
+
         # Final system cleanup
         try:
             import cv2
+
             cv2.destroyAllWindows()
             for _ in range(5):
                 cv2.waitKey(1)
         except Exception:
             pass
-        
+
         print("👋 Eye tracking system shutdown complete")
 
 
