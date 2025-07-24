@@ -8,11 +8,13 @@
 
 import SwiftUI
 import AVKit
+import UIKit
 
 struct CameraView: View {
     @EnvironmentObject private var device: DeviceService
-    @State private var player: AVPlayer?
-    @State private var isPlayerReady = false
+    @State private var currentImage: UIImage?
+    @State private var isStreaming = false
+    @State private var streamingTask: Task<Void, Never>?
 
     var body: some View {
         VStack(spacing: 28) {
@@ -33,32 +35,35 @@ struct CameraView: View {
             
             // Camera stream
             if device.cameraConnected, let streamURL = device.cameraStreamURL {
-                VideoPlayer(player: player)
-                    .frame(height: 320)
-                    .cornerRadius(18)
-                    .shadow(radius: 6)
-                    .onAppear {
-                        setupPlayer(with: streamURL)
+                ZStack {
+                    Rectangle()
+                        .fill(Color.black)
+                        .frame(height: 320)
+                        .cornerRadius(18)
+                    
+                    if let image = currentImage {
+                        Image(uiImage: image)
+                            .resizable()
+                            .aspectRatio(contentMode: .fit)
+                            .frame(height: 320)
+                            .cornerRadius(18)
+                    } else {
+                        ProgressView("Connecting to camera...")
+                            .foregroundColor(.white)
                     }
-                    .onChange(of: device.cameraStreamURL) { newURL in
-                        if let url = newURL {
-                            setupPlayer(with: url)
-                        }
+                }
+                .shadow(radius: 6)
+                .onAppear {
+                    startMJPEGStream(url: streamURL)
+                }
+                .onChange(of: device.cameraStreamURL) { newURL in
+                    if let url = newURL {
+                        startMJPEGStream(url: url)
                     }
-                    .onDisappear {
-                        player?.pause()
-                    }
-                    .overlay(
-                        // Loading indicator
-                        Group {
-                            if !isPlayerReady {
-                                ProgressView("Loading camera feed...")
-                                    .padding()
-                                    .background(Color.black.opacity(0.7))
-                                    .cornerRadius(8)
-                            }
-                        }
-                    )
+                }
+                .onDisappear {
+                    stopMJPEGStream()
+                }
             } else {
                 VStack(spacing: 16) {
                     Image(systemName: "camera.metering.unknown")
@@ -133,17 +138,80 @@ struct CameraView: View {
         }
     }
     
-    private func setupPlayer(with url: URL) {
-        player?.pause()
-        player = AVPlayer(url: url)
-        isPlayerReady = false
+    private func startMJPEGStream(url: URL) {
+        stopMJPEGStream()
         
-        // Start playing
-        player?.play()
+        streamingTask = Task {
+            await streamMJPEG(from: url)
+        }
+    }
+    
+    private func stopMJPEGStream() {
+        streamingTask?.cancel()
+        streamingTask = nil
+        isStreaming = false
+        currentImage = nil
+    }
+    
+    private func streamMJPEG(from url: URL) async {
+        isStreaming = true
         
-        // Set ready after a short delay (MJPEG streams start immediately)
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
-            isPlayerReady = true
+        do {
+            let (asyncBytes, response) = try await URLSession.shared.bytes(from: url)
+            
+            guard let httpResponse = response as? HTTPURLResponse,
+                  httpResponse.statusCode == 200 else {
+                print("❌ Failed to connect to MJPEG stream")
+                return
+            }
+            
+            var buffer = Data()
+            let boundary = "--jpgboundary"
+            
+            for try await byte in asyncBytes {
+                if Task.isCancelled { break }
+                
+                buffer.append(byte)
+                
+                // Look for JPEG start and end markers
+                if let boundaryRange = buffer.range(of: boundary.data(using: .utf8)!) {
+                    // Process the data after the boundary
+                    let afterBoundary = buffer[boundaryRange.upperBound...]
+                    
+                    // Look for double CRLF (end of headers)
+                    if let headerEnd = afterBoundary.range(of: "\r\n\r\n".data(using: .utf8)!) {
+                        let imageData = afterBoundary[headerEnd.upperBound...]
+                        
+                        // Look for next boundary to find end of image
+                        if let nextBoundary = imageData.range(of: boundary.data(using: .utf8)!) {
+                            let jpegData = imageData[..<nextBoundary.lowerBound]
+                            
+                            // Create UIImage from JPEG data
+                            if let image = UIImage(data: jpegData) {
+                                await MainActor.run {
+                                    currentImage = image
+                                }
+                            }
+                            
+                            // Keep remaining data for next frame
+                            buffer = Data(imageData[nextBoundary.lowerBound...])
+                        }
+                    }
+                }
+                
+                // Prevent buffer from growing too large
+                if buffer.count > 1024 * 1024 { // 1MB limit
+                    buffer.removeFirst(buffer.count / 2)
+                }
+            }
+            
+        } catch {
+            if !Task.isCancelled {
+                print("❌ MJPEG streaming error: \(error)")
+            }
+            await MainActor.run {
+                isStreaming = false
+            }
         }
     }
 }

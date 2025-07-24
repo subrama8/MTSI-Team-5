@@ -125,6 +125,7 @@ class CameraStreamHandler(BaseHTTPRequestHandler):
         self.send_header('Content-Type', 'multipart/x-mixed-replace; boundary=--jpgboundary')
         self.send_header('Cache-Control', 'no-cache')
         self.send_header('Access-Control-Allow-Origin', '*')
+        self.send_header('Connection', 'close')
         self.end_headers()
         
         try:
@@ -133,17 +134,24 @@ class CameraStreamHandler(BaseHTTPRequestHandler):
                     frame = self.server.unified_controller.get_latest_annotated_frame()
                     if frame is not None:
                         # Encode frame as JPEG
-                        ret, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
+                        ret, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
                         if ret:
-                            self.wfile.write(b'--jpgboundary\r\n')
-                            self.send_header('Content-Type', 'image/jpeg')
-                            self.send_header('Content-Length', str(len(buffer)))
-                            self.end_headers()
-                            self.wfile.write(buffer.tobytes())
-                            self.wfile.write(b'\r\n')
+                            try:
+                                self.wfile.write(b'--jpgboundary\r\n')
+                                self.wfile.write(f'Content-Type: image/jpeg\r\n'.encode())
+                                self.wfile.write(f'Content-Length: {len(buffer)}\r\n\r\n'.encode())
+                                self.wfile.write(buffer.tobytes())
+                                self.wfile.write(b'\r\n')
+                                self.wfile.flush()
+                            except (BrokenPipeError, ConnectionResetError):
+                                # Client disconnected - exit gracefully
+                                break
                 
-                time.sleep(1/30)  # 30 FPS
+                time.sleep(1/15)  # 15 FPS for better compatibility
                 
+        except (BrokenPipeError, ConnectionResetError, OSError) as e:
+            # Normal disconnection - don't log as error
+            pass
         except Exception as e:
             print(f"Stream error: {e}")
     
@@ -206,6 +214,23 @@ class ThreadingHTTPServer(ThreadingMixIn, HTTPServer):
     """Threading HTTP server for handling multiple connections."""
     allow_reuse_address = True
     daemon_threads = True
+    
+    def handle_error(self, request, client_address):
+        """Handle network errors gracefully without crashing."""
+        # Common network errors that we can ignore
+        import errno
+        if hasattr(request, 'recv'):
+            try:
+                # Try to identify the error type
+                pass
+            except (ConnectionResetError, BrokenPipeError, OSError) as e:
+                if e.errno in (errno.ECONNRESET, errno.EPIPE, 54):
+                    # Connection reset by peer - normal mobile network behavior
+                    print(f"📱 Client {client_address[0]} disconnected (normal)")
+                    return
+        
+        # For other errors, use default handling but suppress stack trace
+        print(f"⚠️ Network error from {client_address[0]}: Connection issue")
 
 
 class UnifiedEyeTrackingController:
