@@ -18,6 +18,9 @@
 #   http://[laptop-ip]:8081/stream.mjpeg  - Camera stream for iOS
 #   http://[laptop-ip]:8081/status        - Server status
 
+import warnings
+warnings.filterwarnings("ignore", category=UserWarning, module="google.protobuf")
+
 import serial
 import serial.tools.list_ports
 import time
@@ -217,20 +220,25 @@ class ThreadingHTTPServer(ThreadingMixIn, HTTPServer):
     
     def handle_error(self, request, client_address):
         """Handle network errors gracefully without crashing."""
-        # Common network errors that we can ignore
+        import sys
         import errno
-        if hasattr(request, 'recv'):
-            try:
-                # Try to identify the error type
-                pass
-            except (ConnectionResetError, BrokenPipeError, OSError) as e:
-                if e.errno in (errno.ECONNRESET, errno.EPIPE, 54):
-                    # Connection reset by peer - normal mobile network behavior
-                    print(f"📱 Client {client_address[0]} disconnected (normal)")
+        
+        # Get the actual exception info
+        exc_type, exc_value, exc_traceback = sys.exc_info()
+        
+        # Handle common network errors silently
+        if exc_type in (ConnectionResetError, BrokenPipeError, OSError):
+            if hasattr(exc_value, 'errno'):
+                if exc_value.errno in (errno.ECONNRESET, errno.EPIPE, 54, 32):
+                    # Normal mobile disconnection - log minimally
+                    print(f"📱 iOS app ({client_address[0]}) disconnected")
                     return
         
-        # For other errors, use default handling but suppress stack trace
-        print(f"⚠️ Network error from {client_address[0]}: Connection issue")
+        # For unexpected errors, show minimal info
+        if exc_type:
+            print(f"⚠️ Connection issue with {client_address[0]}: {exc_type.__name__}")
+        else:
+            print(f"📱 Client {client_address[0]} connection ended")
 
 
 class UnifiedEyeTrackingController:
