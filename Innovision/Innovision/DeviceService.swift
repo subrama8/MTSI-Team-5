@@ -159,8 +159,8 @@ final class DeviceService: ObservableObject {
             
             requestConnection.start(queue: connectionQueue)
             
-            // Set a timeout
-            DispatchQueue.main.asyncAfter(deadline: .now() + 10) {
+            // Set a timeout - increased for slower networks
+            DispatchQueue.main.asyncAfter(deadline: .now() + 15) {
                 if !hasResumed {
                     hasResumed = true
                     requestConnection.cancel()
