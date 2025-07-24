@@ -244,13 +244,27 @@ final class DeviceService: ObservableObject {
         ]
         
         await withTaskGroup(of: String?.self) { group in
-            // Check broader range of IP addresses in parallel
+            // First, check specific known IPs that are commonly used
+            let priorityIPs = [
+                "192.168.1.54",  // Your current laptop IP
+                "192.168.1.1", "192.168.1.2", "192.168.1.10", "192.168.1.20",
+                "192.168.0.1", "192.168.0.2", "192.168.0.10", "192.168.0.20",
+                "127.0.0.1"
+            ]
+            
+            for host in priorityIPs {
+                group.addTask {
+                    await self.checkCameraServer(host: host)
+                }
+            }
+            
+            // Then check broader range of IP addresses in parallel
             for baseIP in baseIPs {
                 // Check common ranges more comprehensively
                 let ranges: [Range<Int>]
                 if baseIP == "192.168.1." || baseIP == "192.168.0." {
-                    // Home networks - check broader range
-                    ranges = [1..<60, 100..<201]
+                    // Home networks - check broader range (but skip the priority IPs we already checked)
+                    ranges = [21..<60, 100..<201]
                 } else {
                     // Corporate networks - check common ranges
                     ranges = [1..<21, 100..<151]
@@ -259,16 +273,14 @@ final class DeviceService: ObservableObject {
                 for range in ranges {
                     for i in range {
                         let host = "\(baseIP)\(i)"
-                        group.addTask {
-                            await self.checkCameraServer(host: host)
+                        // Skip if already in priority list
+                        if !priorityIPs.contains(host) {
+                            group.addTask {
+                                await self.checkCameraServer(host: host)
+                            }
                         }
                     }
                 }
-            }
-            
-            // Also check localhost
-            group.addTask {
-                await self.checkCameraServer(host: "127.0.0.1")
             }
             
             for await result in group {
