@@ -119,7 +119,11 @@ final class DeviceService: ObservableObject {
                                         self.parseHTTPResponse(response)
                                     }
                                     
-                                    requestConnection.cancel()
+                                    // Allow a brief delay before canceling to let server close gracefully
+                                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                                        requestConnection.cancel()
+                                    }
+                                    
                                     if !hasResumed {
                                         hasResumed = true
                                         continuation.resume()

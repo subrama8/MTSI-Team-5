@@ -138,7 +138,8 @@ void handleWiFiCommands() {
   client.println(response);
   client.flush();
   
-  delay(10);
+  // Allow more time for client to read response before closing
+  delay(50);
   client.stop();
 }
 
@@ -173,9 +174,7 @@ void loop() {
   
   // Plotter is enabled - process serial commands as before
   if (Serial.available() < 8) {
-    // No packet available - keep motors stopped when no data
-    analogWrite(EN1, 0);
-    analogWrite(EN2, 0);
+    // No packet available - but don't stop motors, just return
     return;
   }
 
