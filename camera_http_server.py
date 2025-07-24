@@ -222,7 +222,7 @@ class CameraStreamServer:
         print("🔍 Checking available cameras...")
         available_cameras = []
         
-        for i in range(5):  # Check indices 0-4
+        for i in range(2):  # Check indices 0-1 only
             cap = cv2.VideoCapture(i)
             if cap.isOpened():
                 ret, frame = cap.read()
