@@ -70,19 +70,69 @@ struct HomeView: View {
                     .padding(.horizontal)
                 }
 
-                // Start/Stop big button
-                Button {
-                    if device.isRunning {
-                        device.stopDropper()
-                    } else {
-                        if !device.isConnected { device.connect() }
-                        device.startDropper()
+                // Plotter connection status
+                if !device.isConnected {
+                    VStack(spacing: 12) {
+                        Label("Plotter Disconnected", systemImage: "wifi.slash")
+                            .foregroundColor(.orange)
+                        Button("Connect to Plotter") {
+                            device.connect()
+                        }
+                        .buttonStyle(BigButton())
+                        .padding(.horizontal)
                     }
-                } label: {
-                    Label(device.isRunning ? "Stop (Running)" : "Start",
-                          systemImage: device.isRunning ? "pause.fill" : "play.fill")
+                } else {
+                    VStack(spacing: 16) {
+                        // Connection status
+                        HStack {
+                            Image(systemName: "wifi")
+                                .foregroundColor(.green)
+                            Text("Connected to Plotter")
+                                .foregroundColor(.green)
+                            Spacer()
+                            Text(device.plotterStatus.capitalized)
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                        .padding(.horizontal)
+                        
+                        // Start/Stop plotter button
+                        Button {
+                            Task {
+                                if device.isRunning {
+                                    await device.stopPlotter()
+                                } else {
+                                    await device.startPlotter()
+                                }
+                            }
+                        } label: {
+                            Label(device.isRunning ? "Stop Plotter" : "Start Plotter",
+                                  systemImage: device.isRunning ? "stop.fill" : "play.fill")
+                        }
+                        .buttonStyle(BigButton())
+                        .padding(.horizontal)
+                        
+                        // Refresh status button
+                        Button {
+                            Task {
+                                await device.getPlotterStatus()
+                            }
+                        } label: {
+                            Label("Refresh Status", systemImage: "arrow.clockwise")
+                        }
+                        .font(.caption)
+                        .padding(.horizontal)
+                    }
                 }
-                .buttonStyle(BigButton()).padding(.horizontal)
+                
+                // Show connection error if any
+                if let error = device.connectionError {
+                    Text("Connection Error: \(error)")
+                        .foregroundColor(.red)
+                        .font(.caption)
+                        .padding(.horizontal)
+                        .multilineTextAlignment(.center)
+                }
 
                 Button { showLogSheet = true } label: {
                     Label("Log a Drop", systemImage: "plus")

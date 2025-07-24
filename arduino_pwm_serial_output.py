@@ -20,6 +20,8 @@ import sys
 import threading
 import atexit
 import signal
+import requests
+import socket
 from eye_detection_model import EyeDetectionModel
 
 # Global configuration
@@ -57,26 +59,56 @@ def find_arduino_port():
     return None
 
 
+def check_arduino_wifi_status(arduino_ip="192.168.1.60", port=8080, timeout=2):
+    """
+    Check if Arduino WiFi server is accessible and get plotter status.
+    
+    Args:
+        arduino_ip (str): Arduino IP address
+        port (int): Arduino server port
+        timeout (int): Connection timeout in seconds
+        
+    Returns:
+        dict: Status response or None if not accessible
+    """
+    try:
+        response = requests.get(f"http://{arduino_ip}:{port}/status", timeout=timeout)
+        if response.status_code == 200:
+            return response.json()
+    except Exception as e:
+        print(f"⚠️ Arduino WiFi not accessible: {e}")
+    return None
+
 class ArduinoPWMSerialOutput:
     """
     Arduino PWM serial output controller for eye tracking feedback.
     Sends directional LED control packets based on eye position.
+    Supports both serial and WiFi communication modes.
     """
 
-    def __init__(self, serial_port=None, baud_rate=115200, deadzone_pixels=10):
+    def __init__(self, serial_port=None, baud_rate=115200, deadzone_pixels=10, 
+                 arduino_ip="192.168.1.60", arduino_port=8080):
         """
-        Initialize Arduino serial connection.
+        Initialize Arduino communication (serial and/or WiFi).
 
         Args:
             serial_port (str): Arduino serial port path (None if no Arduino)
             baud_rate (int): Serial communication baud rate
             deadzone_pixels (int): Deadzone radius in pixels around frame center
+            arduino_ip (str): Arduino WiFi IP address
+            arduino_port (int): Arduino WiFi server port
         """
         print(f"Initializing eye tracking system...")
         self.serial_port = serial_port
         self.baud_rate = baud_rate
         self.deadzone_pixels = deadzone_pixels
         self.arduino = None
+        
+        # WiFi communication setup
+        self.arduino_ip = arduino_ip
+        self.arduino_port = arduino_port
+        self.wifi_enabled = False
+        self.plotter_enabled = False
 
         if serial_port:
             print(f"Serial port: {serial_port}, baud rate: {baud_rate}")
@@ -89,7 +121,17 @@ class ArduinoPWMSerialOutput:
                 print("📺 Continuing with camera display only")
                 self.arduino = None
         else:
-            print("📺 No Arduino port specified - running in display-only mode")
+            print("📺 No Arduino port specified - checking WiFi connection")
+            
+        # Check WiFi connection to Arduino
+        print(f"🌐 Checking Arduino WiFi connection at {arduino_ip}:{arduino_port}")
+        wifi_status = check_arduino_wifi_status(arduino_ip, arduino_port)
+        if wifi_status:
+            self.wifi_enabled = True
+            self.plotter_enabled = wifi_status.get('enabled', False)
+            print(f"✓ Arduino WiFi connected - Plotter {'enabled' if self.plotter_enabled else 'disabled'}")
+        else:
+            print("⚠️ Arduino WiFi not accessible - serial communication only")
 
         # Initialize eye detection model
         try:
@@ -152,38 +194,55 @@ class ArduinoPWMSerialOutput:
 
     def send_packet(self, packet):
         """
-        Send packet to Arduino or display what would be sent.
+        Send packet to Arduino via serial and/or WiFi.
 
         Args:
             packet (str): 8-character packet to send
         """
-        if self.arduino is None:
-            return
-
-        try:
-            if not self.arduino.is_open:
-                print("⚠️  Arduino connection closed - attempting to reconnect...")
-                self.arduino.open()
-            self.arduino.write(packet.encode())
-            self.arduino.flush()  # Ensure packet is sent immediately
-        except Exception as e:
-            print(f"⚠️  Failed to send packet '{packet}': {e}")
-            # Try to reconnect
+        # Send via serial if available
+        if self.arduino is not None:
             try:
-                print("🔄 Attempting to reconnect to Arduino...")
-                if self.arduino:
-                    self.arduino.close()
-                import serial
+                if not self.arduino.is_open:
+                    print("⚠️  Arduino connection closed - attempting to reconnect...")
+                    self.arduino.open()
+                self.arduino.write(packet.encode())
+                self.arduino.flush()  # Ensure packet is sent immediately
+            except Exception as e:
+                print(f"⚠️  Failed to send packet '{packet}' via serial: {e}")
+                # Try to reconnect
+                try:
+                    print("🔄 Attempting to reconnect to Arduino...")
+                    if self.arduino:
+                        self.arduino.close()
+                    import serial
 
-                self.arduino = serial.Serial(
-                    self.serial_port, self.baud_rate, timeout=1
-                )
-                print("✓ Reconnection successful")
-            except Exception as reconnect_error:
-                print(f"❌ Reconnection failed: {reconnect_error}")
-                print("📺 Continuing in display-only mode")
-                self.arduino = None
+                    self.arduino = serial.Serial(
+                        self.serial_port, self.baud_rate, timeout=1
+                    )
+                    print("✓ Serial reconnection successful")
+                except Exception as reconnect_error:
+                    print(f"❌ Serial reconnection failed: {reconnect_error}")
+                    print("📺 Continuing without serial communication")
+                    self.arduino = None
+        
+        # Note: WiFi communication is handled by plotter state management
+        # The Arduino only processes serial packets when plotter is enabled via WiFi
 
+    def check_plotter_status(self):
+        """Check and update plotter status via WiFi."""
+        if self.wifi_enabled:
+            try:
+                status = check_arduino_wifi_status(self.arduino_ip, self.arduino_port, timeout=1)
+                if status:
+                    old_status = self.plotter_enabled
+                    self.plotter_enabled = status.get('enabled', False)
+                    if old_status != self.plotter_enabled:
+                        print(f"📊 Plotter status changed: {'enabled' if self.plotter_enabled else 'disabled'}")
+                    return True
+            except Exception as e:
+                print(f"⚠️ Failed to check plotter status: {e}")
+        return False
+    
     def run(self, debug_display=True):
         """
         Main loop for eye tracking and Arduino communication.
@@ -192,12 +251,21 @@ class ArduinoPWMSerialOutput:
             debug_display (bool): Whether to show debug visualization
         """
         print("Starting eye tracking loop...")
+        print("📱 Connect iOS app to Arduino WiFi (192.168.4.1) to control plotter")
         print("Press 'q' in the camera window or Ctrl+C to stop")
         loop_count = 0
         last_eye_status = None
+        last_status_check = 0
+        
         try:
             while True:
                 loop_count += 1
+                current_time = time.time()
+                
+                # Check plotter status periodically (every 5 seconds)
+                if current_time - last_status_check > 5:
+                    self.check_plotter_status()
+                    last_status_check = current_time
 
                 # Get eye location from model
                 try:
@@ -223,7 +291,16 @@ class ArduinoPWMSerialOutput:
                 # Display frame with packet info if debug is enabled
                 if debug_display:
                     try:
-                        self.eye_model.display_frame_with_packet(packet, eye_x, eye_y)
+                        # Add plotter status to display
+                        status_text = f"Plotter: {'ON' if self.plotter_enabled else 'OFF'}"
+                        if self.wifi_enabled:
+                            status_text += " (WiFi)"
+                        elif self.arduino:
+                            status_text += " (Serial)"
+                        else:
+                            status_text += " (No Connection)"
+                            
+                        self.eye_model.display_frame_with_packet(packet, eye_x, eye_y, extra_text=status_text)
                     except Exception as e:
                         print(f"Error displaying camera frame: {e}")
 
