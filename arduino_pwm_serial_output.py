@@ -291,7 +291,7 @@ class ArduinoPWMSerialOutput:
                 # Display frame with packet info if debug is enabled
                 if debug_display:
                     try:
-                        # Add plotter status to display
+                        # Create packet info with plotter status
                         status_text = f"Plotter: {'ON' if self.plotter_enabled else 'OFF'}"
                         if self.wifi_enabled:
                             status_text += " (WiFi)"
@@ -299,8 +299,9 @@ class ArduinoPWMSerialOutput:
                             status_text += " (Serial)"
                         else:
                             status_text += " (No Connection)"
-                            
-                        self.eye_model.display_frame_with_packet(packet, eye_x, eye_y, extra_text=status_text)
+                        
+                        packet_with_status = f"{packet} | {status_text}"
+                        self.eye_model.display_frame_with_packet(packet_with_status, eye_x, eye_y)
                     except Exception as e:
                         print(f"Error displaying camera frame: {e}")
 

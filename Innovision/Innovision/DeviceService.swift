@@ -17,7 +17,6 @@ final class DeviceService: ObservableObject {
     @Published var lastCommand: String?
     @Published var plotterStatus: String = "unknown"
 
-    private var connection: NWConnection?
     private let connectionQueue = DispatchQueue(label: "device-connection", qos: .userInitiated)
     
     // Arduino R4 WiFi - Update this IP if your Arduino gets a different address
@@ -28,47 +27,26 @@ final class DeviceService: ObservableObject {
     func connect() {
         guard !isConnected else { return }
         
-        connectionError = nil
-        let host = NWEndpoint.Host(arduinoHost)
-        let port = NWEndpoint.Port(rawValue: arduinoPort)!
-        
-        connection = NWConnection(host: host, port: port, using: .tcp)
-        connection?.stateUpdateHandler = { [weak self] state in
-            Task { @MainActor in
-                guard let self = self else { return }
-                
-                switch state {
-                case .ready:
-                    self.isConnected = true
-                    self.connectionError = nil
-                    // Get initial plotter status
-                    await self.getPlotterStatus()
-                case .failed(let error):
-                    self.isConnected = false
-                    self.connectionError = "Connection failed: \(error.localizedDescription)"
-                case .cancelled:
-                    self.isConnected = false
-                    self.connectionError = nil
-                default:
-                    self.isConnected = false
-                }
+        Task {
+            connectionError = nil
+            
+            // Test connectivity by getting plotter status
+            await getPlotterStatus()
+            
+            // If no error occurred, we're connected
+            if connectionError == nil {
+                isConnected = true
             }
         }
-        connection?.start(queue: connectionQueue)
     }
 
     func disconnect() {
-        connection?.cancel()
-        connection = nil
         isConnected = false
         isRunning   = false
+        connectionError = nil
     }
 
     func startPlotter() async {
-        guard isConnected else {
-            connectionError = "Device not connected"
-            return
-        }
         await sendHTTPRequest(endpoint: "/start")
     }
     
@@ -94,48 +72,94 @@ final class DeviceService: ObservableObject {
     }
 
     private func sendHTTPRequest(endpoint: String) async {
-        guard let conn = connection, isConnected else {
-            connectionError = "Cannot send command: not connected"
-            return
-        }
-        
-        let httpRequest = "GET \(endpoint) HTTP/1.1\r\nHost: \(arduinoHost)\r\nConnection: close\r\n\r\n"
         lastCommand = endpoint
         connectionError = nil
         
+        // Create a new connection for each HTTP request
+        let host = NWEndpoint.Host(arduinoHost)
+        let port = NWEndpoint.Port(rawValue: arduinoPort)!
+        let requestConnection = NWConnection(host: host, port: port, using: .tcp)
+        
         return await withCheckedContinuation { continuation in
-            conn.send(content: Data(httpRequest.utf8), completion: .contentProcessed { [weak self] error in
+            var hasResumed = false
+            
+            requestConnection.stateUpdateHandler = { [weak self] state in
                 Task { @MainActor in
                     guard let self = self else {
-                        continuation.resume()
+                        if !hasResumed {
+                            hasResumed = true
+                            continuation.resume()
+                        }
                         return
                     }
                     
-                    if let error = error {
-                        self.connectionError = "Send failed: \(error.localizedDescription)"
-                        continuation.resume()
-                        return
-                    }
-                    
-                    // Read response
-                    conn.receive(minimumIncompleteLength: 1, maximumLength: 1024) { [weak self] data, _, isComplete, error in
-                        Task { @MainActor in
-                            guard let self = self else {
-                                continuation.resume()
+                    switch state {
+                    case .ready:
+                        // Connection ready, send HTTP request
+                        let httpRequest = "GET \(endpoint) HTTP/1.1\r\nHost: \(self.arduinoHost)\r\nConnection: close\r\n\r\n"
+                        
+                        requestConnection.send(content: Data(httpRequest.utf8), completion: .contentProcessed { error in
+                            if let error = error {
+                                Task { @MainActor in
+                                    self.connectionError = "Send failed: \(error.localizedDescription)"
+                                    if !hasResumed {
+                                        hasResumed = true
+                                        continuation.resume()
+                                    }
+                                }
                                 return
                             }
                             
-                            if let error = error {
-                                self.connectionError = "Receive failed: \(error.localizedDescription)"
-                            } else if let data = data, let response = String(data: data, encoding: .utf8) {
-                                self.parseHTTPResponse(response)
+                            // Read response
+                            requestConnection.receive(minimumIncompleteLength: 1, maximumLength: 1024) { data, _, isComplete, error in
+                                Task { @MainActor in
+                                    if let error = error {
+                                        self.connectionError = "Receive failed: \(error.localizedDescription)"
+                                    } else if let data = data, let response = String(data: data, encoding: .utf8) {
+                                        self.parseHTTPResponse(response)
+                                    }
+                                    
+                                    requestConnection.cancel()
+                                    if !hasResumed {
+                                        hasResumed = true
+                                        continuation.resume()
+                                    }
+                                }
                             }
-                            
+                        })
+                        
+                    case .failed(let error):
+                        self.connectionError = "Request failed: \(error.localizedDescription)"
+                        if !hasResumed {
+                            hasResumed = true
                             continuation.resume()
                         }
+                        
+                    case .cancelled:
+                        if !hasResumed {
+                            hasResumed = true
+                            continuation.resume()
+                        }
+                        
+                    default:
+                        break
                     }
                 }
-            })
+            }
+            
+            requestConnection.start(queue: connectionQueue)
+            
+            // Set a timeout
+            DispatchQueue.main.asyncAfter(deadline: .now() + 10) {
+                if !hasResumed {
+                    hasResumed = true
+                    requestConnection.cancel()
+                    Task { @MainActor in
+                        self.connectionError = "Request timeout"
+                    }
+                    continuation.resume()
+                }
+            }
         }
     }
     
