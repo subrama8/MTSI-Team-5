@@ -48,10 +48,16 @@ final class DeviceService: ObservableObject {
 
     func startPlotter() async {
         await sendHTTPRequest(endpoint: "/start")
+        // Give a moment for the Arduino to process, then refresh status
+        try? await Task.sleep(nanoseconds: 100_000_000) // 0.1 seconds
+        await getPlotterStatus()
     }
     
     func stopPlotter() async {
         await sendHTTPRequest(endpoint: "/stop")
+        // Give a moment for the Arduino to process, then refresh status
+        try? await Task.sleep(nanoseconds: 100_000_000) // 0.1 seconds
+        await getPlotterStatus()
     }
     
     func getPlotterStatus() async {
