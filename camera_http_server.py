@@ -276,14 +276,28 @@ def main():
     
     camera_server = None
     http_server = None
+    server_thread = None
+    shutdown_event = threading.Event()
     
     def cleanup():
         """Cleanup function."""
         print("\n🧹 Cleaning up...")
+        shutdown_event.set()  # Signal shutdown
+        
+        if http_server:
+            try:
+                http_server.shutdown()
+                http_server.server_close()
+                print("✓ HTTP server stopped")
+            except Exception as e:
+                print(f"⚠️ Error stopping HTTP server: {e}")
+        
+        if server_thread and server_thread.is_alive():
+            server_thread.join(timeout=2)
+            
         if camera_server:
             camera_server.stop()
-        if http_server:
-            http_server.shutdown()
+            
         print("✅ Cleanup complete")
     
     def signal_handler(signum, frame):
@@ -306,6 +320,7 @@ def main():
         server_address = ('', SERVER_PORT)
         http_server = ThreadingHTTPServer(server_address, CameraStreamHandler)
         http_server.camera_server = camera_server
+        http_server.timeout = 1  # Add timeout to make server responsive
         
         local_ip = get_local_ip()
         print(f"✓ Camera server started")
@@ -314,9 +329,17 @@ def main():
         print(f"📊 Status URL: http://{local_ip}:{SERVER_PORT}/status")
         print("\nPress Ctrl+C to stop")
         
-        # Start HTTP server
-        http_server.serve_forever()
+        # Start HTTP server in a separate thread
+        server_thread = threading.Thread(target=http_server.serve_forever, daemon=True)
+        server_thread.start()
         
+        # Main thread waits for shutdown signal
+        try:
+            while not shutdown_event.is_set():
+                shutdown_event.wait(1)  # Check every second
+        except KeyboardInterrupt:
+            print("\n🛑 Keyboard interrupt received")
+            
     except KeyboardInterrupt:
         print("\n🛑 Server stopped by user")
     except Exception as e:

@@ -244,12 +244,24 @@ final class DeviceService: ObservableObject {
         ]
         
         await withTaskGroup(of: String?.self) { group in
-            // Check common IP addresses in parallel
+            // Check broader range of IP addresses in parallel
             for baseIP in baseIPs {
-                for i in [1, 100, 101, 102, 103, 104, 105, 110, 150, 200] {
-                    let host = "\(baseIP)\(i)"
-                    group.addTask {
-                        await self.checkCameraServer(host: host)
+                // Check common ranges more comprehensively
+                let ranges: [Range<Int>]
+                if baseIP == "192.168.1." || baseIP == "192.168.0." {
+                    // Home networks - check broader range
+                    ranges = [1..<60, 100..<201]
+                } else {
+                    // Corporate networks - check common ranges
+                    ranges = [1..<21, 100..<151]
+                }
+                
+                for range in ranges {
+                    for i in range {
+                        let host = "\(baseIP)\(i)"
+                        group.addTask {
+                            await self.checkCameraServer(host: host)
+                        }
                     }
                 }
             }
@@ -282,13 +294,19 @@ final class DeviceService: ObservableObject {
     private func checkCameraServer(host: String) async -> String? {
         do {
             let url = URL(string: "http://\(host):\(cameraPort)/status")!
-            let (data, response) = try await URLSession.shared.data(from: url)
+            
+            // Create a request with timeout
+            var request = URLRequest(url: url)
+            request.timeoutInterval = 2.0  // 2 second timeout per host
+            
+            let (data, response) = try await URLSession.shared.data(for: request)
             
             if let httpResponse = response as? HTTPURLResponse,
                httpResponse.statusCode == 200,
                let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                let status = json["status"] as? String,
                status == "running" {
+                print("📷 Found camera server at: \(host)")
                 return host
             }
         } catch {
