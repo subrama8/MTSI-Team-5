@@ -8,7 +8,7 @@ const char* password = "ket_iot19104";
 // WiFi server on port 8080
 WiFiServer server(8080);
 
-// Global plotter state
+// Global plotter state - default OFF, controlled by phone
 bool plotterEnabled = false;
 bool wifiConnected = false;
 
