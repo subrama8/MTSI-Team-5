@@ -155,53 +155,54 @@ struct CameraView: View {
     
     private func streamMJPEG(from url: URL) async {
         isStreaming = true
+        print("🎥 Starting MJPEG stream from: \(url)")
         
         do {
             let (asyncBytes, response) = try await URLSession.shared.bytes(from: url)
             
             guard let httpResponse = response as? HTTPURLResponse,
                   httpResponse.statusCode == 200 else {
-                print("❌ Failed to connect to MJPEG stream")
+                print("❌ Failed to connect to MJPEG stream - Status: \((response as? HTTPURLResponse)?.statusCode ?? -1)")
                 return
             }
             
+            print("✅ Connected to MJPEG stream")
             var buffer = Data()
-            let boundary = "--jpgboundary"
+            let boundary = Data("--jpgboundary".utf8)
+            let doubleNewline = Data("\r\n\r\n".utf8)
+            let jpegStart = Data([0xFF, 0xD8]) // JPEG start marker
             
             for try await byte in asyncBytes {
                 if Task.isCancelled { break }
                 
                 buffer.append(byte)
                 
-                // Look for JPEG start and end markers
-                if let boundaryRange = buffer.range(of: boundary.data(using: .utf8)!) {
-                    // Process the data after the boundary
-                    let afterBoundary = buffer[boundaryRange.upperBound...]
+                // Look for JPEG data directly (more reliable than boundary parsing)
+                if let jpegStartIndex = buffer.range(of: jpegStart)?.lowerBound {
+                    // Found start of JPEG, look for end
+                    let jpegData = buffer[jpegStartIndex...]
                     
-                    // Look for double CRLF (end of headers)
-                    if let headerEnd = afterBoundary.range(of: "\r\n\r\n".data(using: .utf8)!) {
-                        let imageData = afterBoundary[headerEnd.upperBound...]
-                        
-                        // Look for next boundary to find end of image
-                        if let nextBoundary = imageData.range(of: boundary.data(using: .utf8)!) {
-                            let jpegData = imageData[..<nextBoundary.lowerBound]
-                            
-                            // Create UIImage from JPEG data
-                            if let image = UIImage(data: jpegData) {
-                                await MainActor.run {
-                                    currentImage = image
-                                }
-                            }
-                            
-                            // Keep remaining data for next frame
-                            buffer = Data(imageData[nextBoundary.lowerBound...])
+                    // Try to create image from current data
+                    let testData = Data(jpegData.prefix(min(jpegData.count, 500000))) // Max 500KB per frame
+                    
+                    if let image = UIImage(data: testData) {
+                        await MainActor.run {
+                            self.currentImage = image
+                            print("📸 Frame updated - Image size: \(image.size)")
                         }
+                        
+                        // Clear buffer after successful image
+                        buffer.removeAll()
+                    } else if jpegData.count > 1000000 { // 1MB limit
+                        // Buffer too large, clear it
+                        buffer.removeAll()
                     }
                 }
                 
-                // Prevent buffer from growing too large
-                if buffer.count > 1024 * 1024 { // 1MB limit
-                    buffer.removeFirst(buffer.count / 2)
+                // Prevent excessive memory usage
+                if buffer.count > 2000000 { // 2MB absolute limit
+                    print("⚠️ Buffer overflow, clearing...")
+                    buffer.removeAll()
                 }
             }
             
