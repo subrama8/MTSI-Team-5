@@ -1,31 +1,29 @@
 import SwiftUI
-import Foundation
 import UserNotifications
 
-// ────────── FREQUENCY ──────────
+// MARK: – Frequency
 enum Frequency: Hashable, Codable {
     case daily
-    case weekly(Set<Int>)          // weekday numbers 1…7 (Sun‑Sat)
+    case weekly(Set<Int>)                // weekday numbers 1…7 (Sun=1)
 
     var description: String {
         switch self {
         case .daily:
             return "Daily"
         case .weekly(let days):
-            let syms = DateFormatter().shortWeekdaySymbols ??
-                       ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"]
+            let syms = DateFormatter().shortWeekdaySymbols ?? []
             return days.sorted().map { syms[$0 - 1] }.joined(separator: ", ")
         }
     }
 }
 
-// ────────── MEDICATION ──────────
+// MARK: – Medication
 final class Medication: Identifiable, ObservableObject, Equatable {
     let id = UUID()
 
     @Published var name: String
     @Published var color: Color
-    @Published var times: [DateComponents]         // hour/min only
+    @Published var times: [DateComponents]      // hour/minute only
     @Published var frequency: Frequency
 
     init(name: String,
@@ -38,17 +36,17 @@ final class Medication: Identifiable, ObservableObject, Equatable {
         self.frequency = frequency
     }
 
-    /// Next dose after now
     func nextDose(after date: Date = .now) -> Date? {
         let cal = Calendar.current
         func next(_ t: DateComponents) -> Date? {
             switch frequency {
             case .daily:
                 return cal.nextDate(after: date, matching: t,
-                                    matchingPolicy: .nextTime, direction: .forward)
-            case .weekly(let set):
-                return set.compactMap { w -> Date? in
-                    var c = t; c.weekday = w
+                                    matchingPolicy: .nextTime,
+                                    direction: .forward)
+            case .weekly(let days):
+                return days.compactMap { wd -> Date? in
+                    var c = t; c.weekday = wd
                     return cal.nextDate(after: date, matching: c,
                                         matchingPolicy: .nextTimePreservingSmallerComponents,
                                         direction: .forward)
@@ -57,17 +55,14 @@ final class Medication: Identifiable, ObservableObject, Equatable {
         }
         return times.compactMap(next).min()
     }
-    
-    // MARK: - Equatable
-    static func == (lhs: Medication, rhs: Medication) -> Bool {
-        return lhs.id == rhs.id
-    }
+
+    static func == (lhs: Medication, rhs: Medication) -> Bool { lhs.id == rhs.id }
 }
 
-// ────────── DROP LOG ──────────
+// MARK: – DropLog
 struct DropEvent: Identifiable {
     let id = UUID()
-    let med: Medication
+    let med : Medication
     let date: Date
 }
 
@@ -77,54 +72,28 @@ final class DropLog: ObservableObject {
 
     func record(_ med: Medication, auto _: Bool) {
         events.append(DropEvent(med: med, date: .now))
-        
-        // Cancel remaining notifications for this medication today
         cancelRemainingNotifications(for: med)
     }
-    
-    /// Cancel any remaining notifications for today if medication was logged
+
     private func cancelRemainingNotifications(for med: Medication) {
-        let medicationId = med.id.uuidString
-        let now = Date()
-        let calendar = Calendar.current
-        
-        for time in med.times {
-            let timeId = "\(time.hour ?? 0)_\(time.minute ?? 0)"
-            
-            // Check if the current dose time is today
-            guard let doseTime = calendar.date(from: time),
-                  calendar.isDate(doseTime, inSameDayAs: now) else {
-                continue
-            }
-            
-            // Cancel all three notification types if they haven't fired yet
-            switch med.frequency {
-            case .daily:
-                LocalNotificationManager.shared.cancelNotification(id: "\(medicationId)_before_\(timeId)")
-                LocalNotificationManager.shared.cancelNotification(id: "\(medicationId)_exact_\(timeId)")
-                LocalNotificationManager.shared.cancelNotification(id: "\(medicationId)_after_\(timeId)")
-                
-            case .weekly(let days):
-                let currentWeekday = calendar.component(.weekday, from: now)
-                if days.contains(currentWeekday) {
-                    let weekdayTimeId = "\(currentWeekday)_\(timeId)"
-                    LocalNotificationManager.shared.cancelNotification(id: "\(medicationId)_before_\(weekdayTimeId)")
-                    LocalNotificationManager.shared.cancelNotification(id: "\(medicationId)_exact_\(weekdayTimeId)")
-                    LocalNotificationManager.shared.cancelNotification(id: "\(medicationId)_after_\(weekdayTimeId)")
-                }
-            }
+        let manager = LocalNotificationManager.shared
+        let id = med.id.uuidString
+        for t in med.times {
+            let tag = "\(t.hour ?? 0)_\(t.minute ?? 0)"
+            manager.cancelNotification(id: "\(id)_before_\(tag)")
+            manager.cancelNotification(id: "\(id)_exact_\(tag)")
+            manager.cancelNotification(id: "\(id)_after_\(tag)")
         }
     }
 
     func takenToday(for med: Medication) -> Int {
         let cal = Calendar.current
-        return events.filter { $0.med.id == med.id && cal.isDateInToday($0.date) }.count
+        events.filter { $0.med.id == med.id && cal.isDateInToday($0.date) }.count
     }
 
     func streak(for med: Medication, schedule: MedicationSchedule) -> Int {
         let cal = Calendar.current
-        var day = cal.startOfDay(for: .now)
-        var count = 0
+        var day = cal.startOfDay(for: .now); var count = 0
         while true {
             let expected = schedule.expectedDoses(for: med, on: day)
             let taken = events.filter {
@@ -138,166 +107,136 @@ final class DropLog: ObservableObject {
     }
 }
 
-// ────────── MEDICATION SCHEDULE ──────────
+// MARK: – Schedule
 @MainActor
 final class MedicationSchedule: ObservableObject {
     @Published var meds: [Medication] = []
 
-    /// How many doses are expected for `med` on a specific day
     func expectedDoses(for med: Medication, on day: Date = .now) -> Int {
         let cal = Calendar.current
         switch med.frequency {
         case .daily:
             return med.times.count
-        case .weekly(let set):
-            let wd = cal.component(.weekday, from: day)
-            return set.contains(wd) ? med.times.count : 0
+        case .weekly(let days):
+            return days.contains(cal.component(.weekday, from: day))
+                 ? med.times.count : 0
         }
     }
 
-    // MARK: Add + schedule
+    // CRUD
     func add(_ med: Medication) async {
         meds.append(med)
         await scheduleEnhancedNotifications(for: med)
     }
-    
+
     func updateMedication(_ med: Medication) async {
-        // Cancel existing notifications for this medication
         await cancelNotifications(for: med)
-        // Schedule new notifications
         await scheduleEnhancedNotifications(for: med)
     }
-    
+
     func removeMedication(_ med: Medication) async {
         meds.removeAll { $0.id == med.id }
         await cancelNotifications(for: med)
     }
-    
+
+    // MARK: – Notification handling
     private func cancelNotifications(for med: Medication) async {
-        let medicationId = med.id.uuidString
-        for time in med.times {
-            let timeId = "\(time.hour ?? 0)_\(time.minute ?? 0)"
-            
+        let manager = LocalNotificationManager.shared
+        let id = med.id.uuidString
+        for t in med.times {
+            let tag = "\(t.hour ?? 0)_\(t.minute ?? 0)"
             switch med.frequency {
             case .daily:
-                // Cancel all three types of notifications
-                LocalNotificationManager.shared.cancelNotification(id: "\(medicationId)_before_\(timeId)")
-                LocalNotificationManager.shared.cancelNotification(id: "\(medicationId)_exact_\(timeId)")
-                LocalNotificationManager.shared.cancelNotification(id: "\(medicationId)_after_\(timeId)")
-                
-                // Cancel old notification IDs for backwards compatibility
-                LocalNotificationManager.shared.cancelNotification(id: "\(medicationId)_warning_\(timeId)")
-                LocalNotificationManager.shared.cancelNotification(id: "\(medicationId)_missed_\(timeId)")
-                
+                manager.cancelNotification(id: "\(id)_before_\(tag)")
+                manager.cancelNotification(id: "\(id)_exact_\(tag)")
+                manager.cancelNotification(id: "\(id)_after_\(tag)")
             case .weekly(let days):
-                for weekday in days {
-                    let weekdayTimeId = "\(weekday)_\(timeId)"
-                    
-                    // Cancel all three types of notifications
-                    LocalNotificationManager.shared.cancelNotification(id: "\(medicationId)_before_\(weekdayTimeId)")
-                    LocalNotificationManager.shared.cancelNotification(id: "\(medicationId)_exact_\(weekdayTimeId)")
-                    LocalNotificationManager.shared.cancelNotification(id: "\(medicationId)_after_\(weekdayTimeId)")
-                    
-                    // Cancel old notification IDs for backwards compatibility
-                    LocalNotificationManager.shared.cancelNotification(id: "\(medicationId)_warning_\(weekdayTimeId)")
-                    LocalNotificationManager.shared.cancelNotification(id: "\(medicationId)_missed_\(weekdayTimeId)")
+                for wd in days {
+                    let wdTag = "\(wd)_\(tag)"
+                    manager.cancelNotification(id: "\(id)_before_\(wdTag)")
+                    manager.cancelNotification(id: "\(id)_exact_\(wdTag)")
+                    manager.cancelNotification(id: "\(id)_after_\(wdTag)")
                 }
             }
         }
     }
-    
-    /// Enhanced notification scheduling with three-phase alerts (before/at/after)
+
     private func scheduleEnhancedNotifications(for med: Medication) async {
-        let notificationManager = LocalNotificationManager.shared
-        
+        let manager = LocalNotificationManager.shared
+        let lead = manager.reminderLeadTime
+
         for time in med.times {
-            let medicationId = med.id.uuidString
-            let timeId = "\(time.hour ?? 0)_\(time.minute ?? 0)"
-            
+            let medID  = med.id.uuidString
+            let tag    = "\(time.hour ?? 0)_\(time.minute ?? 0)"
+
+            func comps(_ delta: Int) -> DateComponents {
+                manager.minutesOffset(delta, from: time)
+            }
+
             switch med.frequency {
             case .daily:
-                // Schedule 10-minute before notification (if enabled)
-                if notificationManager.notifyBefore,
-                   let fireDate = Calendar.current.date(from: Self.offset(time, by: -10)) {
-                    try? await notificationManager.scheduleWithLoggingCheck(
-                        id: "\(medicationId)_before_\(timeId)",
-                        at: fireDate,
-                        title: "Eye‑drop in 10 min: \(med.name)",
-                        body: "Prepare your \(med.name) eye drops",
-                        medicationId: medicationId
-                    )
+                if manager.notifyBefore,
+                   let d = Calendar.current.date(from: comps(-lead)) {
+                    try? await manager.scheduleWithLoggingCheck(
+                        id: "\(medID)_before_\(tag)",
+                        at: d,
+                        title: "Eye-drop in \(lead) min: \(med.name)",
+                        body: "Prepare your \(med.name) drops",
+                        medicationId: medID)
                 }
-                
-                // Schedule exact time notification (if enabled)
-                if notificationManager.notifyAtTime,
-                   let exactDate = Calendar.current.date(from: time) {
-                    try? await notificationManager.scheduleWithLoggingCheck(
-                        id: "\(medicationId)_exact_\(timeId)",
-                        at: exactDate,
+                if manager.notifyAtTime,
+                   let d = Calendar.current.date(from: time) {
+                    try? await manager.scheduleWithLoggingCheck(
+                        id: "\(medID)_exact_\(tag)",
+                        at: d,
                         title: "Time for \(med.name)",
                         body: "Take your eye drops now",
-                        medicationId: medicationId
-                    )
+                        medicationId: medID)
                 }
-                
-                // Schedule 10-minute after notification (if enabled)
-                if notificationManager.notifyAfter,
-                   let fireDate = Calendar.current.date(from: Self.offset(time, by: 10)) {
-                    try? await notificationManager.scheduleWithLoggingCheck(
-                        id: "\(medicationId)_after_\(timeId)",
-                        at: fireDate,
+                if manager.notifyAfter,
+                   let d = Calendar.current.date(from: comps(+lead)) {
+                    try? await manager.scheduleWithLoggingCheck(
+                        id: "\(medID)_after_\(tag)",
+                        at: d,
                         title: "Don't forget: \(med.name)",
-                        body: "Did you take your \(med.name) eye drops?",
-                        medicationId: medicationId
-                    )
+                        body: "Did you take your \(med.name) drops?",
+                        medicationId: medID)
                 }
 
             case .weekly(let days):
-                for weekday in days {
-                    let weekdayTimeId = "\(weekday)_\(timeId)"
-                    
-                    // Schedule 10-minute before notification (if enabled)
-                    if notificationManager.notifyBefore {
-                        var warningComps = Self.offset(time, by: -10)
-                        warningComps.weekday = weekday
-                        if let fireDate = Calendar.current.date(from: warningComps) {
-                            try? await notificationManager.scheduleWithLoggingCheck(
-                                id: "\(medicationId)_before_\(weekdayTimeId)",
-                                at: fireDate,
-                                title: "Eye‑drop in 10 min: \(med.name)",
-                                body: "Prepare your \(med.name) eye drops",
-                                medicationId: medicationId
-                            )
+                for wd in days {
+                    let wdTag = "\(wd)_\(tag)"
+                    if manager.notifyBefore {
+                        var c = comps(-lead); c.weekday = wd
+                        if let d = Calendar.current.date(from: c) {
+                            try? await manager.scheduleWithLoggingCheck(
+                                id: "\(medID)_before_\(wdTag)",
+                                at: d,
+                                title: "Eye-drop in \(lead) min: \(med.name)",
+                                body: "Prepare your \(med.name) drops",
+                                medicationId: medID)
                         }
                     }
-                    
-                    // Schedule exact time notification (if enabled)
-                    if notificationManager.notifyAtTime {
-                        var exactComps = time
-                        exactComps.weekday = weekday
-                        if let exactDate = Calendar.current.date(from: exactComps) {
-                            try? await notificationManager.scheduleWithLoggingCheck(
-                                id: "\(medicationId)_exact_\(weekdayTimeId)",
-                                at: exactDate,
+                    if manager.notifyAtTime {
+                        var c = time; c.weekday = wd
+                        if let d = Calendar.current.date(from: c) {
+                            try? await manager.scheduleWithLoggingCheck(
+                                id: "\(medID)_exact_\(wdTag)",
+                                at: d,
                                 title: "Time for \(med.name)",
                                 body: "Take your eye drops now",
-                                medicationId: medicationId
-                            )
+                                medicationId: medID)
                         }
                     }
-                    
-                    // Schedule 10-minute after notification (if enabled)
-                    if notificationManager.notifyAfter {
-                        var afterComps = Self.offset(time, by: 10)
-                        afterComps.weekday = weekday
-                        if let fireDate = Calendar.current.date(from: afterComps) {
-                            try? await notificationManager.scheduleWithLoggingCheck(
-                                id: "\(medicationId)_after_\(weekdayTimeId)",
-                                at: fireDate,
+                    if manager.notifyAfter {
+                        var c = comps(+lead); c.weekday = wd
+                        if let d = Calendar.current.date(from: c) {
+                            try? await manager.scheduleWithLoggingCheck(
+                                id: "\(medID)_after_\(wdTag)",
+                                at: d,
                                 title: "Don't forget: \(med.name)",
-                                body: "Did you take your \(med.name) eye drops?",
-                                medicationId: medicationId
-                            )
+                                body: "Did you take your \(med.name) drops?",
+                                medicationId: medID)
                         }
                     }
                 }
@@ -305,58 +244,21 @@ final class MedicationSchedule: ObservableObject {
         }
     }
 
-    /// Creates 10‑minute‑early local notifications for each dose time.
-    private func scheduleNotifications(for med: Medication) async {
-        for time in med.times {
-            switch med.frequency {
-            case .daily:
-                if let fireDate = Calendar.current.date(from: Self.offset(time, by: -10)) {
-                    try? await LocalNotificationManager.shared.schedule(
-                        id: UUID().uuidString,
-                        at: fireDate,
-                        title: "Eye‑drop in 10 min: \(med.name)")
-                }
-
-            case .weekly(let days):
-                for weekday in days {
-                    var comps = Self.offset(time, by: -10)
-                    comps.weekday = weekday
-                    if let fireDate = Calendar.current.date(from: comps) {
-                        try? await LocalNotificationManager.shared.schedule(
-                            id: UUID().uuidString,
-                            at: fireDate,
-                            title: "Eye‑drop in 10 min: \(med.name)")
-                    }
-                }
-            }
-        }
-    }
-
-    /// Helper to shift minutes safely with bounds checking
-    private static func offset(_ comps: DateComponents, by minutes: Int) -> DateComponents {
-        var c = comps
-        let currentMinute = c.minute ?? 0
-        let newMinute = currentMinute + minutes
-        
-        if newMinute < 0 {
-            c.hour = (c.hour ?? 0) - 1
-            c.minute = 60 + newMinute
-        } else if newMinute >= 60 {
-            c.hour = (c.hour ?? 0) + (newMinute / 60)
-            c.minute = newMinute % 60
-        } else {
-            c.minute = newMinute
-        }
-        
-        return c
-    }
-
-    // MARK: Demo seed
+    // MARK: – Demo seed
     func seedDemoData() async {
         guard meds.isEmpty else { return }
-        let date  = Date().addingTimeInterval(20 * 60) // 20 minutes from now
+        let date  = Date().addingTimeInterval(20 * 60)
         let comps = Calendar.current.dateComponents([.hour, .minute], from: date)
         let demo  = Medication(name: "Timolol", color: .blue, times: [comps])
         await add(demo)
+    }
+
+    // MARK: – Legacy offset used in older helper
+    private static func offset(_ comps: DateComponents, by minutes: Int) -> DateComponents {
+        var c = comps
+        let new = (c.minute ?? 0) + minutes
+        c.hour   = (c.hour ?? 0) + new / 60
+        c.minute = (new % 60 + 60) % 60
+        return c
     }
 }
