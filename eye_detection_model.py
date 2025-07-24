@@ -49,6 +49,10 @@ class EyeDetectionModel:
         # Iris contour indices for visualization
         self.LEFT_IRIS = [474, 475, 476, 477, 473]
         self.RIGHT_IRIS = [469, 470, 471, 472, 468]
+        
+        # Eyelid landmark indices for head-position-independent eye center detection
+        self.LEFT_EYELID = [362, 382, 381, 380, 374, 373, 390, 249, 263, 466, 388, 387, 386, 385, 384, 398]
+        self.RIGHT_EYELID = [33, 7, 163, 144, 145, 153, 154, 155, 133, 173, 157, 158, 159, 160, 161, 246]
 
         # Camera initialization with fallback
         self.cap = None
@@ -111,6 +115,9 @@ class EyeDetectionModel:
         self.active_eye = 'left'  # 'left' or 'right'
         self.last_visibility_check = 0
         self.visibility_check_interval = 1.0  # Check every 1 second
+        
+        # Eye center calculation mode: 'iris' (pupil-based) or 'eyelid' (head-position-independent)
+        self.center_mode = 'eyelid'  # Default to eyelid tracking
         
         # Cleanup tracking
         self._cleanup_called = False
@@ -215,15 +222,31 @@ class EyeDetectionModel:
             if not current_eye_visible:
                 return None, None
             
-            # Get coordinates from active eye
-            if self.active_eye == 'left':
-                iris_center = lm[self.LEFT_IRIS_CENTER]
+            # Get coordinates from active eye based on tracking mode
+            if self.center_mode == 'iris':
+                # Use iris center (pupil tracking)
+                if self.active_eye == 'left':
+                    iris_center = lm[self.LEFT_IRIS_CENTER]
+                else:
+                    iris_center = lm[self.RIGHT_IRIS_CENTER]
+                
+                ex = int(iris_center.x * self.frame_w)
+                ey = int(iris_center.y * self.frame_h)
             else:
-                iris_center = lm[self.RIGHT_IRIS_CENTER]
-            
-            
-            ex = int(iris_center.x * self.frame_w)
-            ey = int(iris_center.y * self.frame_h)
+                # Use eyelid center (head-position-independent)
+                if self.active_eye == 'left':
+                    eyelid_indices = self.LEFT_EYELID
+                else:
+                    eyelid_indices = self.RIGHT_EYELID
+                
+                # Calculate average position of all eyelid landmarks
+                sum_x = sum(lm[i].x for i in eyelid_indices)
+                sum_y = sum(lm[i].y for i in eyelid_indices)
+                avg_x = sum_x / len(eyelid_indices)
+                avg_y = sum_y / len(eyelid_indices)
+                
+                ex = int(avg_x * self.frame_w)
+                ey = int(avg_y * self.frame_h)
 
             return ex, ey
 
@@ -248,33 +271,58 @@ class EyeDetectionModel:
             if res.multi_face_landmarks:
                 lm = res.multi_face_landmarks[0].landmark
                 
-                # Get coordinates for the active eye
-                if self.active_eye == 'left':
-                    iris_center = lm[self.LEFT_IRIS_CENTER]
-                    iris_indices = self.LEFT_IRIS
-                    center_color = (0, 0, 255)  # Red for left
+                # Get coordinates and visualization based on tracking mode
+                if self.center_mode == 'iris':
+                    # Iris mode visualization
+                    if self.active_eye == 'left':
+                        iris_center = lm[self.LEFT_IRIS_CENTER]
+                        iris_indices = self.LEFT_IRIS
+                        center_color = (0, 0, 255)  # Red for left
+                    else:
+                        iris_center = lm[self.RIGHT_IRIS_CENTER]
+                        iris_indices = self.RIGHT_IRIS
+                        center_color = (255, 0, 0)  # Blue for right
+                    
+                    ex = int(iris_center.x * self.frame_w)
+                    ey = int(iris_center.y * self.frame_h)
+                    
+                    # Draw iris contour
+                    for i in iris_indices:
+                        px = int(lm[i].x * self.frame_w)
+                        py = int(lm[i].y * self.frame_h)
+                        cv2.circle(display_frame, (px, py), 2, (0, 255, 0), -1)  # Green iris contour
                 else:
-                    iris_center = lm[self.RIGHT_IRIS_CENTER]
-                    iris_indices = self.RIGHT_IRIS
-                    center_color = (255, 0, 0)  # Blue for right
+                    # Eyelid mode visualization
+                    if self.active_eye == 'left':
+                        eyelid_indices = self.LEFT_EYELID
+                        center_color = (0, 0, 255)  # Red for left
+                    else:
+                        eyelid_indices = self.RIGHT_EYELID
+                        center_color = (255, 0, 0)  # Blue for right
+                    
+                    # Calculate eyelid center
+                    sum_x = sum(lm[i].x for i in eyelid_indices)
+                    sum_y = sum(lm[i].y for i in eyelid_indices)
+                    avg_x = sum_x / len(eyelid_indices)
+                    avg_y = sum_y / len(eyelid_indices)
+                    
+                    ex = int(avg_x * self.frame_w)
+                    ey = int(avg_y * self.frame_h)
+                    
+                    # Draw eyelid landmarks
+                    for i in eyelid_indices:
+                        px = int(lm[i].x * self.frame_w)
+                        py = int(lm[i].y * self.frame_h)
+                        cv2.circle(display_frame, (px, py), 1, (0, 255, 255), -1)  # Yellow eyelid points
                 
-                ex = int(iris_center.x * self.frame_w)
-                ey = int(iris_center.y * self.frame_h)
-                
-                # Only draw visualization for the ACTIVE eye
-                for i in iris_indices:
-                    px = int(lm[i].x * self.frame_w)
-                    py = int(lm[i].y * self.frame_h)
-                    cv2.circle(display_frame, (px, py), 2, (0, 255, 0), -1)  # Green iris contour
-                
-                # Draw active iris center
+                # Draw eye center
                 cv2.circle(display_frame, (ex, ey), 5, center_color, -1)
                 
-                # Add active eye indicator text
-                eye_text = f"Tracking: {self.active_eye.upper()} eye"
+                # Add tracking mode and active eye indicator text
+                mode_text = f"Mode: {self.center_mode.upper()} | Eye: {self.active_eye.upper()}"
                 cv2.putText(
                     display_frame,
-                    eye_text,
+                    mode_text,
                     (10, self.frame_h - 20),
                     cv2.FONT_HERSHEY_SIMPLEX,
                     0.6,
