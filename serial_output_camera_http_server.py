@@ -117,10 +117,35 @@ class CameraStreamHandler(BaseHTTPRequestHandler):
             self.send_mjpeg_stream()
         elif self.path == '/status':
             self.send_status()
+        elif self.path == '/test':
+            self.send_test_image()
         elif self.path == '/':
             self.send_html_viewer()
         else:
             self.send_error(404, "Not Found")
+    
+    def send_test_image(self):
+        """Send a single test JPEG image."""
+        self.send_response(200)
+        self.send_header('Content-Type', 'image/jpeg')
+        self.send_header('Access-Control-Allow-Origin', '*')
+        self.end_headers()
+        
+        if hasattr(self.server, 'unified_controller') and self.server.unified_controller:
+            frame = self.server.unified_controller.get_latest_annotated_frame()
+            if frame is not None:
+                ret, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
+                if ret:
+                    self.wfile.write(buffer.tobytes())
+                    return
+        
+        # Send a simple test pattern if no camera
+        import numpy as np
+        test_image = np.zeros((240, 320, 3), dtype=np.uint8)
+        test_image[60:180, 80:240] = [0, 255, 0]  # Green rectangle
+        ret, buffer = cv2.imencode('.jpg', test_image)
+        if ret:
+            self.wfile.write(buffer.tobytes())
     
     def send_mjpeg_stream(self):
         """Send MJPEG camera stream."""
@@ -523,8 +548,6 @@ class UnifiedEyeTrackingController:
 
                 # Check for quit command (only if debug display is enabled)  
                 if debug_display:
-                    import cv2
-
                     key = cv2.waitKey(1) & 0xFF
                     if key == ord("q"):
                         print("Quit key pressed")
@@ -592,8 +615,6 @@ class UnifiedEyeTrackingController:
 
         # Step 4: Final OpenCV cleanup
         try:
-            import cv2
-
             cv2.destroyAllWindows()
             # Multiple waitKey calls to ensure cleanup
             for _ in range(10):
@@ -689,7 +710,6 @@ def main():
 
         # Final system cleanup
         try:
-            import cv2
             cv2.destroyAllWindows()
             for _ in range(5):
                 cv2.waitKey(1)

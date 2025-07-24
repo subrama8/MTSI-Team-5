@@ -173,8 +173,8 @@ struct CameraView: View {
                     }
                 }
                 
-                // Wait before next frame (10 FPS)
-                try await Task.sleep(nanoseconds: 100_000_000)
+                // Wait before next frame (30 FPS)
+                try await Task.sleep(nanoseconds: 33_000_000)
                 
             } catch {
                 if !Task.isCancelled {
