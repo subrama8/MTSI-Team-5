@@ -17,7 +17,7 @@ class EyeDetectionModel:
     Provides precise eye center detection from camera frames using iris tracking.
     """
 
-    def __init__(self, frame_width=640, frame_height=480, camera_index=1, deadzone_pixels=10):
+    def __init__(self, frame_width=640, frame_height=480, camera_index=1, deadzone_pixels=10, reference_offset_pixels=200):
         """
         Initialize the eye detection model.
 
@@ -26,10 +26,12 @@ class EyeDetectionModel:
             frame_height (int): Camera frame height
             camera_index (int): Camera index for cv2.VideoCapture
             deadzone_pixels (int): Deadzone radius in pixels around frame center
+            reference_offset_pixels (int): Pixels above center for target reference point
         """
         self.frame_w = frame_width
         self.frame_h = frame_height
         self.deadzone_pixels = deadzone_pixels
+        self.reference_offset_pixels = reference_offset_pixels
 
         # MediaPipe face mesh initialization with iris landmarks
         self.mp_face_mesh = mp.solutions.face_mesh
@@ -47,6 +49,10 @@ class EyeDetectionModel:
         # Iris contour indices for visualization
         self.LEFT_IRIS = [474, 475, 476, 477, 473]
         self.RIGHT_IRIS = [469, 470, 471, 472, 468]
+        
+        # Eyelid landmark indices for head-position-independent eye center detection
+        self.LEFT_EYELID = [362, 382, 381, 380, 374, 373, 390, 249, 263, 466, 388, 387, 386, 385, 384, 398]
+        self.RIGHT_EYELID = [33, 7, 163, 144, 145, 153, 154, 155, 133, 173, 157, 158, 159, 160, 161, 246]
 
         # Camera initialization with fallback
         self.cap = None
@@ -110,6 +116,9 @@ class EyeDetectionModel:
         self.last_visibility_check = 0
         self.visibility_check_interval = 1.0  # Check every 1 second
         
+        # Eye center calculation mode: 'iris' (pupil-based) or 'eyelid' (head-position-independent)
+        self.center_mode = 'eyelid'  # Default to eyelid tracking
+        
         # Cleanup tracking
         self._cleanup_called = False
         self._cleanup_lock = threading.Lock()
@@ -140,32 +149,21 @@ class EyeDetectionModel:
             center = landmarks[center_idx]
             
             
-            # For iris landmarks, confidence values are often 0.0, so we use coordinate-based detection
-            # Primary method: Use presence if available and > 0
-            if hasattr(center, 'presence') and center.presence is not None and center.presence > 0:
-                visible = center.presence > 0.1  # Lower threshold for iris landmarks
-                return visible
+            # For iris landmarks, confidence values are often 0.0, so we primarily use coordinate-based detection
+            # If the iris center has reasonable coordinates, assume it's visible
+            coords_valid = 0.0 <= center.x <= 1.0 and 0.0 <= center.y <= 1.0
             
-            # Secondary method: Use visibility if available and > 0
-            elif hasattr(center, 'visibility') and center.visibility is not None and center.visibility > 0:
-                visible = center.visibility > 0.05  # Very low threshold for iris landmarks
-                return visible
+            # If coordinates are valid, the eye is visible (MediaPipe wouldn't provide coordinates for invisible eyes)
+            if coords_valid:
+                return True
             
-            # Fallback method: Check if iris landmarks form a reasonable pattern
-            else:
-                # If the iris center has reasonable coordinates, assume it's visible
-                coords_valid = 0.1 <= center.x <= 0.9 and 0.1 <= center.y <= 0.9
-                
-                # Additional check: see if we have multiple valid iris points
-                valid_iris_points = 0
-                for idx in iris_indices:
-                    point = landmarks[idx]
-                    if 0.1 <= point.x <= 0.9 and 0.1 <= point.y <= 0.9:
-                        valid_iris_points += 1
-                
-                # Eye is "visible" if center is valid and we have at least 3 iris points
-                visible = coords_valid and valid_iris_points >= 3
-                return visible
+            # Fallback: Use confidence if coordinates seem invalid
+            if hasattr(center, 'presence') and center.presence is not None and center.presence > 0.1:
+                return True
+            elif hasattr(center, 'visibility') and center.visibility is not None and center.visibility > 0.05:
+                return True
+            
+            return False
                 
         except Exception as e:
             return False
@@ -186,6 +184,9 @@ class EyeDetectionModel:
         ok, frame = self.cap.read()
         if not ok or frame is None:
             return None, None
+
+        # Rotate frame by 180 degrees
+        frame = cv2.rotate(frame, cv2.ROTATE_180)
 
         # Store frame for display
         self.last_frame = frame.copy()
@@ -221,15 +222,31 @@ class EyeDetectionModel:
             if not current_eye_visible:
                 return None, None
             
-            # Get coordinates from active eye
-            if self.active_eye == 'left':
-                iris_center = lm[self.LEFT_IRIS_CENTER]
+            # Get coordinates from active eye based on tracking mode
+            if self.center_mode == 'iris':
+                # Use iris center (pupil tracking)
+                if self.active_eye == 'left':
+                    iris_center = lm[self.LEFT_IRIS_CENTER]
+                else:
+                    iris_center = lm[self.RIGHT_IRIS_CENTER]
+                
+                ex = int(iris_center.x * self.frame_w)
+                ey = int(iris_center.y * self.frame_h)
             else:
-                iris_center = lm[self.RIGHT_IRIS_CENTER]
-            
-            
-            ex = int(iris_center.x * self.frame_w)
-            ey = int(iris_center.y * self.frame_h)
+                # Use eyelid center (head-position-independent)
+                if self.active_eye == 'left':
+                    eyelid_indices = self.LEFT_EYELID
+                else:
+                    eyelid_indices = self.RIGHT_EYELID
+                
+                # Calculate average position of all eyelid landmarks
+                sum_x = sum(lm[i].x for i in eyelid_indices)
+                sum_y = sum(lm[i].y for i in eyelid_indices)
+                avg_x = sum_x / len(eyelid_indices)
+                avg_y = sum_y / len(eyelid_indices)
+                
+                ex = int(avg_x * self.frame_w)
+                ey = int(avg_y * self.frame_h)
 
             return ex, ey
 
@@ -254,33 +271,58 @@ class EyeDetectionModel:
             if res.multi_face_landmarks:
                 lm = res.multi_face_landmarks[0].landmark
                 
-                # Get coordinates for the active eye
-                if self.active_eye == 'left':
-                    iris_center = lm[self.LEFT_IRIS_CENTER]
-                    iris_indices = self.LEFT_IRIS
-                    center_color = (0, 0, 255)  # Red for left
+                # Get coordinates and visualization based on tracking mode
+                if self.center_mode == 'iris':
+                    # Iris mode visualization
+                    if self.active_eye == 'left':
+                        iris_center = lm[self.LEFT_IRIS_CENTER]
+                        iris_indices = self.LEFT_IRIS
+                        center_color = (0, 0, 255)  # Red for left
+                    else:
+                        iris_center = lm[self.RIGHT_IRIS_CENTER]
+                        iris_indices = self.RIGHT_IRIS
+                        center_color = (255, 0, 0)  # Blue for right
+                    
+                    ex = int(iris_center.x * self.frame_w)
+                    ey = int(iris_center.y * self.frame_h)
+                    
+                    # Draw iris contour
+                    for i in iris_indices:
+                        px = int(lm[i].x * self.frame_w)
+                        py = int(lm[i].y * self.frame_h)
+                        cv2.circle(display_frame, (px, py), 2, (0, 255, 0), -1)  # Green iris contour
                 else:
-                    iris_center = lm[self.RIGHT_IRIS_CENTER]
-                    iris_indices = self.RIGHT_IRIS
-                    center_color = (255, 0, 0)  # Blue for right
+                    # Eyelid mode visualization
+                    if self.active_eye == 'left':
+                        eyelid_indices = self.LEFT_EYELID
+                        center_color = (0, 0, 255)  # Red for left
+                    else:
+                        eyelid_indices = self.RIGHT_EYELID
+                        center_color = (255, 0, 0)  # Blue for right
+                    
+                    # Calculate eyelid center
+                    sum_x = sum(lm[i].x for i in eyelid_indices)
+                    sum_y = sum(lm[i].y for i in eyelid_indices)
+                    avg_x = sum_x / len(eyelid_indices)
+                    avg_y = sum_y / len(eyelid_indices)
+                    
+                    ex = int(avg_x * self.frame_w)
+                    ey = int(avg_y * self.frame_h)
+                    
+                    # Draw eyelid landmarks
+                    for i in eyelid_indices:
+                        px = int(lm[i].x * self.frame_w)
+                        py = int(lm[i].y * self.frame_h)
+                        cv2.circle(display_frame, (px, py), 1, (0, 255, 255), -1)  # Yellow eyelid points
                 
-                ex = int(iris_center.x * self.frame_w)
-                ey = int(iris_center.y * self.frame_h)
-                
-                # Only draw visualization for the ACTIVE eye
-                for i in iris_indices:
-                    px = int(lm[i].x * self.frame_w)
-                    py = int(lm[i].y * self.frame_h)
-                    cv2.circle(display_frame, (px, py), 2, (0, 255, 0), -1)  # Green iris contour
-                
-                # Draw active iris center
+                # Draw eye center
                 cv2.circle(display_frame, (ex, ey), 5, center_color, -1)
                 
-                # Add active eye indicator text
-                eye_text = f"Tracking: {self.active_eye.upper()} eye"
+                # Add tracking mode and active eye indicator text
+                mode_text = f"Mode: {self.center_mode.upper()} | Eye: {self.active_eye.upper()}"
                 cv2.putText(
                     display_frame,
-                    eye_text,
+                    mode_text,
                     (10, self.frame_h - 20),
                     cv2.FONT_HERSHEY_SIMPLEX,
                     0.6,
@@ -288,18 +330,18 @@ class EyeDetectionModel:
                     2,
                 )
 
-            # Draw deadzone circle at center
-            center_x = self.frame_w // 2
-            center_y = self.frame_h // 2
+            # Draw deadzone circle at reference point
+            reference_x = self.frame_w // 2
+            reference_y = self.frame_h // 2 - self.reference_offset_pixels
             cv2.circle(
-                display_frame, (center_x, center_y), 5, (128, 128, 128), 1
+                display_frame, (reference_x, reference_y), 5, (128, 128, 128), 1
             )  # Gray circle
 
             # Determine packet text color based on deadzone
             text_color = (255, 255, 255)  # Default white
             if eye_x is not None and eye_y is not None:
-                # Calculate distance from center
-                distance = ((eye_x - center_x) ** 2 + (eye_y - center_y) ** 2) ** 0.5
+                # Calculate distance from reference point
+                distance = ((eye_x - reference_x) ** 2 + (eye_y - reference_y) ** 2) ** 0.5
 
                 # If within deadzone, use green text
                 if distance <= self.deadzone_pixels:

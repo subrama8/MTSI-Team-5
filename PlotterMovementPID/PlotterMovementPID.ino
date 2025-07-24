@@ -42,6 +42,7 @@ private:
 PID xPid(8, 0, 0.0001);
 PID yPid(8, 0, 0.0001);
 
+
 inline bool isValidDigit(char c) {
   return c >= '0' && c <= '9';
 }
@@ -63,7 +64,12 @@ void setup() {
 }
 
 void loop() {
-  if (Serial.available() < 8) return;
+  if (Serial.available() < 8) {
+    // No packet available - stop motors
+    // analogWrite(EN1, 0);
+    // analogWrite(EN2, 0);
+    return;
+  }
 
   char dirV = Serial.read();
   char v1   = Serial.read(); char v2 = Serial.read(); char v3 = Serial.read();
@@ -80,16 +86,20 @@ void loop() {
     return;
   }
 
+
   int16_t valV = digitsToInt(v1, v2, v3);
   int16_t valH = digitsToInt(h1, h2, h3);
 
-  int16_t errV = (dirV == 'N') ? 0 : ((dirV == 'D') ? -valV : valV);
-  int16_t errH = (dirH == 'N') ? 0 : ((dirH == 'L') ? -valH : valH);
+  // Declare error variables
+  int16_t errV, errH;
 
-  // Reset PID controllers if no eye detected to prevent integral windup
+  // Special case: N000N000 packet acts like U100L000 (only when Python is running)
   if (dirV == 'N' && dirH == 'N') {
-    xPid.reset();
-    yPid.reset();
+    errV = 100;  // Move up with PWM 100
+    errH = 0;    // No horizontal movement
+  } else {
+    errV = ((dirV == 'D') ? -valV : valV);
+    errH = ((dirH == 'L') ? -valH : valH);
   }
 
   int16_t dutyH = xPid.calculate(errH);
