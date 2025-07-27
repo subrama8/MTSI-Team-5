@@ -13,12 +13,13 @@
 #
 # Usage:
 #   python3 serial_output_camera_http_server.py
-#   
+#
 # Endpoints:
 #   http://[laptop-ip]:8081/stream.mjpeg  - Camera stream for iOS
 #   http://[laptop-ip]:8081/status        - Server status
 
 import warnings
+
 warnings.filterwarnings("ignore", category=UserWarning, module="google.protobuf")
 
 import serial
@@ -36,7 +37,7 @@ from socketserver import ThreadingMixIn
 from eye_detection_model import EyeDetectionModel
 
 # Global configuration
-REFERENCE_OFFSET_PIXELS = 210  # Pixels above center for target reference point
+REFERENCE_OFFSET_PIXELS = 220  # Pixels above center for target reference point
 SERVER_PORT = 8081  # HTTP server port for iOS app
 CAMERA_INDEX = 1  # External camera
 FRAME_WIDTH = 640
@@ -77,12 +78,12 @@ def find_arduino_port():
 def check_arduino_wifi_status(arduino_ip="192.168.1.60", port=8080, timeout=2):
     """
     Check if Arduino WiFi server is accessible and get plotter status.
-    
+
     Args:
         arduino_ip (str): Arduino IP address
         port (int): Arduino server port
         timeout (int): Connection timeout in seconds
-        
+
     Returns:
         dict: Status response or None if not accessible
     """
@@ -110,105 +111,131 @@ def get_local_ip():
 
 class CameraStreamHandler(BaseHTTPRequestHandler):
     """HTTP request handler for camera streaming."""
-    
+
     def do_GET(self):
         """Handle GET requests for camera stream."""
-        if self.path == '/stream.mjpeg':
+        if self.path == "/stream.mjpeg":
             self.send_mjpeg_stream()
-        elif self.path == '/status':
+        elif self.path == "/status":
             self.send_status()
-        elif self.path == '/test':
+        elif self.path == "/test":
             self.send_test_image()
-        elif self.path == '/':
+        elif self.path == "/":
             self.send_html_viewer()
         else:
             self.send_error(404, "Not Found")
-    
+
     def send_test_image(self):
         """Send a single test JPEG image."""
         self.send_response(200)
-        self.send_header('Content-Type', 'image/jpeg')
-        self.send_header('Access-Control-Allow-Origin', '*')
+        self.send_header("Content-Type", "image/jpeg")
+        self.send_header("Access-Control-Allow-Origin", "*")
         self.end_headers()
-        
-        if hasattr(self.server, 'unified_controller') and self.server.unified_controller:
+
+        if (
+            hasattr(self.server, "unified_controller")
+            and self.server.unified_controller
+        ):
             frame = self.server.unified_controller.get_latest_annotated_frame()
             if frame is not None:
-                ret, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
+                ret, buffer = cv2.imencode(
+                    ".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 85]
+                )
                 if ret:
                     self.wfile.write(buffer.tobytes())
                     return
-        
+
         # Send a simple test pattern if no camera
         import numpy as np
+
         test_image = np.zeros((240, 320, 3), dtype=np.uint8)
         test_image[60:180, 80:240] = [0, 255, 0]  # Green rectangle
-        ret, buffer = cv2.imencode('.jpg', test_image)
+        ret, buffer = cv2.imencode(".jpg", test_image)
         if ret:
             self.wfile.write(buffer.tobytes())
-    
+
     def send_mjpeg_stream(self):
         """Send MJPEG camera stream."""
         self.send_response(200)
-        self.send_header('Content-Type', 'multipart/x-mixed-replace; boundary=--jpgboundary')
-        self.send_header('Cache-Control', 'no-cache')
-        self.send_header('Access-Control-Allow-Origin', '*')
-        self.send_header('Connection', 'close')
+        self.send_header(
+            "Content-Type", "multipart/x-mixed-replace; boundary=--jpgboundary"
+        )
+        self.send_header("Cache-Control", "no-cache")
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Connection", "close")
         self.end_headers()
-        
+
         try:
             while True:
-                if hasattr(self.server, 'unified_controller') and self.server.unified_controller:
+                if (
+                    hasattr(self.server, "unified_controller")
+                    and self.server.unified_controller
+                ):
                     frame = self.server.unified_controller.get_latest_annotated_frame()
                     if frame is not None:
                         # Encode frame as JPEG
-                        ret, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
+                        ret, buffer = cv2.imencode(
+                            ".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 85]
+                        )
                         if ret:
                             try:
-                                self.wfile.write(b'--jpgboundary\r\n')
-                                self.wfile.write(f'Content-Type: image/jpeg\r\n'.encode())
-                                self.wfile.write(f'Content-Length: {len(buffer)}\r\n\r\n'.encode())
+                                self.wfile.write(b"--jpgboundary\r\n")
+                                self.wfile.write(
+                                    f"Content-Type: image/jpeg\r\n".encode()
+                                )
+                                self.wfile.write(
+                                    f"Content-Length: {len(buffer)}\r\n\r\n".encode()
+                                )
                                 self.wfile.write(buffer.tobytes())
-                                self.wfile.write(b'\r\n')
+                                self.wfile.write(b"\r\n")
                                 self.wfile.flush()
                             except (BrokenPipeError, ConnectionResetError):
                                 # Client disconnected - exit gracefully
                                 break
-                
-                time.sleep(1/15)  # 15 FPS for better compatibility
-                
+
+                time.sleep(1 / 15)  # 15 FPS for better compatibility
+
         except (BrokenPipeError, ConnectionResetError, OSError) as e:
             # Normal disconnection - don't log as error
             pass
         except Exception as e:
             print(f"Stream error: {e}")
-    
+
     def send_status(self):
         """Send server status as JSON."""
         self.send_response(200)
-        self.send_header('Content-Type', 'application/json')
-        self.send_header('Access-Control-Allow-Origin', '*')
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Access-Control-Allow-Origin", "*")
         self.end_headers()
-        
-        controller = getattr(self.server, 'unified_controller', None)
+
+        controller = getattr(self.server, "unified_controller", None)
         status = {
             "status": "running",
-            "camera": "connected" if controller and controller.eye_model else "disconnected",
-            "arduino_serial": "connected" if controller and controller.arduino else "disconnected",
-            "arduino_wifi": "connected" if controller and controller.wifi_enabled else "disconnected",
+            "camera": (
+                "connected" if controller and controller.eye_model else "disconnected"
+            ),
+            "arduino_serial": (
+                "connected" if controller and controller.arduino else "disconnected"
+            ),
+            "arduino_wifi": (
+                "connected"
+                if controller and controller.wifi_enabled
+                else "disconnected"
+            ),
             "plotter_enabled": controller.plotter_enabled if controller else False,
-            "stream_url": f"http://{get_local_ip()}:{SERVER_PORT}/stream.mjpeg"
+            "stream_url": f"http://{get_local_ip()}:{SERVER_PORT}/stream.mjpeg",
         }
-        
+
         import json
+
         self.wfile.write(json.dumps(status).encode())
-    
+
     def send_html_viewer(self):
         """Send a simple HTML viewer for testing."""
         self.send_response(200)
-        self.send_header('Content-Type', 'text/html')
+        self.send_header("Content-Type", "text/html")
         self.end_headers()
-        
+
         html = f"""
         <!DOCTYPE html>
         <html>
@@ -232,7 +259,7 @@ class CameraStreamHandler(BaseHTTPRequestHandler):
         </html>
         """
         self.wfile.write(html.encode())
-    
+
     def log_message(self, format, *args):
         """Override to reduce HTTP request logging."""
         pass  # Suppress HTTP request logs
@@ -240,25 +267,26 @@ class CameraStreamHandler(BaseHTTPRequestHandler):
 
 class ThreadingHTTPServer(ThreadingMixIn, HTTPServer):
     """Threading HTTP server for handling multiple connections."""
+
     allow_reuse_address = True
     daemon_threads = True
-    
+
     def handle_error(self, request, client_address):
         """Handle network errors gracefully without crashing."""
         import sys
         import errno
-        
+
         # Get the actual exception info
         exc_type, exc_value, exc_traceback = sys.exc_info()
-        
+
         # Handle common network errors silently
         if exc_type in (ConnectionResetError, BrokenPipeError, OSError):
-            if hasattr(exc_value, 'errno'):
+            if hasattr(exc_value, "errno"):
                 if exc_value.errno in (errno.ECONNRESET, errno.EPIPE, 54, 32):
                     # Normal mobile disconnection - log minimally
                     print(f"📱 iOS app ({client_address[0]}) disconnected")
                     return
-        
+
         # For unexpected errors, show minimal info
         if exc_type:
             print(f"⚠️ Connection issue with {client_address[0]}: {exc_type.__name__}")
@@ -272,8 +300,14 @@ class UnifiedEyeTrackingController:
     Handles eye tracking, serial communication, WiFi communication, and camera streaming.
     """
 
-    def __init__(self, serial_port=None, baud_rate=115200, deadzone_pixels=10, 
-                 arduino_ip="192.168.1.60", arduino_port=8080):
+    def __init__(
+        self,
+        serial_port=None,
+        baud_rate=115200,
+        deadzone_pixels=10,
+        arduino_ip="192.168.1.60",
+        arduino_port=8080,
+    ):
         """
         Initialize unified eye tracking controller.
 
@@ -286,12 +320,12 @@ class UnifiedEyeTrackingController:
         """
         print(f"🚀 Initializing Unified Eye Tracking System...")
         print("=" * 50)
-        
+
         self.serial_port = serial_port
         self.baud_rate = baud_rate
         self.deadzone_pixels = deadzone_pixels
         self.arduino = None
-        
+
         # WiFi communication setup
         self.arduino_ip = arduino_ip
         self.arduino_port = arduino_port
@@ -315,14 +349,16 @@ class UnifiedEyeTrackingController:
                 self.arduino = None
         else:
             print("📺 No Arduino serial port specified")
-            
+
         # Check WiFi connection to Arduino
         print(f"🌐 Checking Arduino WiFi connection at {arduino_ip}:{arduino_port}")
         wifi_status = check_arduino_wifi_status(arduino_ip, arduino_port)
         if wifi_status:
             self.wifi_enabled = True
-            self.plotter_enabled = wifi_status.get('enabled', False)
-            print(f"✅ Arduino WiFi connected - Plotter {'enabled' if self.plotter_enabled else 'disabled'}")
+            self.plotter_enabled = wifi_status.get("enabled", False)
+            print(
+                f"✅ Arduino WiFi connected - Plotter {'enabled' if self.plotter_enabled else 'disabled'}"
+            )
         else:
             print("⚠️ Arduino WiFi not accessible")
 
@@ -355,7 +391,9 @@ class UnifiedEyeTrackingController:
         signal.signal(signal.SIGTERM, self._signal_handler)
 
         print("✅ Unified eye tracking system ready!")
-        print(f"🌐 HTTP camera server will be available at: http://{get_local_ip()}:{SERVER_PORT}")
+        print(
+            f"🌐 HTTP camera server will be available at: http://{get_local_ip()}:{SERVER_PORT}"
+        )
 
     def _calculate_directional_packet(self, eye_x, eye_y):
         """
@@ -426,12 +464,16 @@ class UnifiedEyeTrackingController:
         """Check and update plotter status via WiFi."""
         if self.wifi_enabled:
             try:
-                status = check_arduino_wifi_status(self.arduino_ip, self.arduino_port, timeout=1)
+                status = check_arduino_wifi_status(
+                    self.arduino_ip, self.arduino_port, timeout=1
+                )
                 if status:
                     old_status = self.plotter_enabled
-                    self.plotter_enabled = status.get('enabled', False)
+                    self.plotter_enabled = status.get("enabled", False)
                     if old_status != self.plotter_enabled:
-                        print(f"📊 Plotter status changed: {'enabled' if self.plotter_enabled else 'disabled'}")
+                        print(
+                            f"📊 Plotter status changed: {'enabled' if self.plotter_enabled else 'disabled'}"
+                        )
                     return True
             except Exception as e:
                 pass  # Silently handle status check failures
@@ -440,7 +482,11 @@ class UnifiedEyeTrackingController:
     def get_latest_annotated_frame(self):
         """Get the latest annotated camera frame for streaming."""
         with self.frame_lock:
-            return self.latest_annotated_frame.copy() if self.latest_annotated_frame is not None else None
+            return (
+                self.latest_annotated_frame.copy()
+                if self.latest_annotated_frame is not None
+                else None
+            )
 
     def run(self, debug_display=True):
         """
@@ -454,16 +500,16 @@ class UnifiedEyeTrackingController:
         print("🤖 Arduino communication active")
         print("Press 'q' in camera window or Ctrl+C to stop")
         print("-" * 50)
-        
+
         loop_count = 0
         last_eye_status = None
         last_status_check = 0
-        
+
         try:
             while True:
                 loop_count += 1
                 current_time = time.time()
-                
+
                 # Check plotter status periodically (every 5 seconds)
                 if current_time - last_status_check > 5:
                     self.check_plotter_status()
@@ -495,35 +541,60 @@ class UnifiedEyeTrackingController:
                 frame = self.eye_model.get_current_frame()
                 if frame is not None:
                     annotated_frame = frame.copy()
-                    
+
                     # Add eye tracking visualizations
                     if eye_x is not None and eye_y is not None:
                         # Draw eye center
-                        cv2.circle(annotated_frame, (int(eye_x), int(eye_y)), 5, (0, 255, 0), -1)
+                        cv2.circle(
+                            annotated_frame,
+                            (int(eye_x), int(eye_y)),
+                            5,
+                            (0, 255, 0),
+                            -1,
+                        )
                         status_text = f"Eye Detected - {packet}"
                     else:
                         status_text = "No Eye Detected"
-                    
+
                     # Add reference point and deadzone visualization
                     ref_x = self.frame_w // 2
                     ref_y = self.frame_h // 2 - REFERENCE_OFFSET_PIXELS
-                    cv2.circle(annotated_frame, (ref_x, ref_y), 3, (255, 0, 0), -1)  # Blue reference point
-                    cv2.circle(annotated_frame, (ref_x, ref_y), self.deadzone_pixels, (255, 0, 0), 2)  # Blue deadzone circle
-                    
+                    cv2.circle(
+                        annotated_frame, (ref_x, ref_y), 3, (255, 0, 0), -1
+                    )  # Blue reference point
+                    cv2.circle(
+                        annotated_frame,
+                        (ref_x, ref_y),
+                        self.deadzone_pixels,
+                        (255, 0, 0),
+                        2,
+                    )  # Blue deadzone circle
+
                     # Add comprehensive status overlay
                     status_lines = [
                         f"Packet: {packet}",
                         f"Frame: {loop_count}",
-                        f"Arduino: {'Serial' if self.arduino else 'None'}" + 
-                        (f" + WiFi {'ON' if self.plotter_enabled else 'OFF'}" if self.wifi_enabled else ""),
-                        f"iOS Stream: Active"
+                        f"Arduino: {'Serial' if self.arduino else 'None'}"
+                        + (
+                            f" + WiFi {'ON' if self.plotter_enabled else 'OFF'}"
+                            if self.wifi_enabled
+                            else ""
+                        ),
+                        f"iOS Stream: Active",
                     ]
-                    
+
                     for i, line in enumerate(status_lines):
                         y_pos = 25 + (i * 20)
-                        cv2.putText(annotated_frame, line, (10, y_pos), 
-                                   cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
-                    
+                        cv2.putText(
+                            annotated_frame,
+                            line,
+                            (10, y_pos),
+                            cv2.FONT_HERSHEY_SIMPLEX,
+                            0.5,
+                            (255, 255, 255),
+                            1,
+                        )
+
                     # Update frame for streaming
                     with self.frame_lock:
                         self.latest_annotated_frame = annotated_frame
@@ -532,7 +603,9 @@ class UnifiedEyeTrackingController:
                 if debug_display:
                     try:
                         # Create packet info with comprehensive status
-                        status_text = f"Plotter: {'ON' if self.plotter_enabled else 'OFF'}"
+                        status_text = (
+                            f"Plotter: {'ON' if self.plotter_enabled else 'OFF'}"
+                        )
                         if self.wifi_enabled:
                             status_text += " (WiFi)"
                         elif self.arduino:
@@ -540,13 +613,15 @@ class UnifiedEyeTrackingController:
                         else:
                             status_text += " (No Arduino)"
                         status_text += " | iOS Stream: Active"
-                        
+
                         packet_with_status = f"{packet} | {status_text}"
-                        self.eye_model.display_frame_with_packet(packet_with_status, eye_x, eye_y)
+                        self.eye_model.display_frame_with_packet(
+                            packet_with_status, eye_x, eye_y
+                        )
                     except Exception as e:
                         print(f"Error displaying camera frame: {e}")
 
-                # Check for quit command (only if debug display is enabled)  
+                # Check for quit command (only if debug display is enabled)
                 if debug_display:
                     key = cv2.waitKey(1) & 0xFF
                     if key == ord("q"):
@@ -649,7 +724,7 @@ def main():
 
     unified_controller = None
     http_server = None
-    
+
     def cleanup():
         """Cleanup function."""
         print("\n🧹 Cleaning up servers...")
@@ -658,18 +733,18 @@ def main():
         if http_server:
             http_server.shutdown()
         print("✅ Server cleanup complete")
-    
+
     def signal_handler_main(signum, frame):
         """Handle termination signals in main."""
         print(f"\n🛑 Received signal {signum} in main, cleaning up...")
         cleanup()
         sys.exit(0)
-    
+
     # Register signal handlers
     signal.signal(signal.SIGINT, signal_handler_main)
     signal.signal(signal.SIGTERM, signal_handler_main)
     atexit.register(cleanup)
-    
+
     try:
         # Automatically detect Arduino port
         arduino_port = find_arduino_port()
@@ -681,21 +756,21 @@ def main():
 
         # Initialize unified controller
         unified_controller = UnifiedEyeTrackingController(arduino_port)
-        
+
         # Initialize HTTP server for iOS app
-        server_address = ('', SERVER_PORT)
+        server_address = ("", SERVER_PORT)
         http_server = ThreadingHTTPServer(server_address, CameraStreamHandler)
         http_server.unified_controller = unified_controller
-        
+
         # Start HTTP server in background thread
         server_thread = threading.Thread(target=http_server.serve_forever, daemon=True)
         server_thread.start()
-        
+
         local_ip = get_local_ip()
         print(f"✅ HTTP camera server started at: http://{local_ip}:{SERVER_PORT}")
         print(f"📺 iOS stream URL: http://{local_ip}:{SERVER_PORT}/stream.mjpeg")
         print(f"📊 Status URL: http://{local_ip}:{SERVER_PORT}/status")
-        
+
         # Run the main eye tracking loop
         unified_controller.run(debug_display=True)
 
@@ -704,6 +779,7 @@ def main():
     except Exception as e:
         print(f"❌ Unexpected error: {e}")
         import traceback
+
         traceback.print_exc()
     finally:
         cleanup()
